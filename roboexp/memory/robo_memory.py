@@ -64,7 +64,18 @@ class RoboMemory:
         self.latest_observations = None
         # Save the stuffs into the base directory
         self.base_dir = base_dir
-
+    
+    def get_instance_meshes(self):
+        import os
+        save_path = "/home/exx/Downloads/tmp_meshes/"
+        os.makedirs(save_path, exist_ok=True)
+        for x in self.memory_instances:
+            points = self.index_to_pcd(x.voxel_indexes)
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(points)
+            o3d.io.write_point_cloud(f"{save_path}/{x.instance_id}.ply", pcd)
+        print('done')        
+            
     def get_scene_pcd(self):
         return self.index_to_pcd(np.array(list(self.memory_scene.keys()))), np.array(
             list(self.memory_scene.values())
@@ -1023,7 +1034,7 @@ class RoboMemory:
         obs["mask"] = mask
         # Store the voxels in the scene and the color for each voxel
         pixel_index_mapping = -np.ones((color.shape[0], color.shape[1]), dtype=np.int32)
-        # Get the voxel list for current mask
+        # Get the voxel list for current mask        
         pixel_index_mapping[mask] = self.pcd_to_index(position_world[mask])
         return color, pixel_index_mapping, mask
 
@@ -1059,7 +1070,7 @@ class RoboMemory:
         scene = {}
         _scene_avg = {}
         mask = mask * np.logical_not(robotarm_mask)
-
+        
         # Filter valid voxel indices and colors using the mask
         valid_voxel_indexes = pixel_index_mapping[mask]
         valid_colors = color[mask]
