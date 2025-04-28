@@ -83,7 +83,170 @@ class RoboAct:
             [0.56, 0.6],
         ]
         self.idle_flag = [True, True, True, True, True]
+    def get_image_bbox(self, *, w2c, points, K, dist_coef, w, h):
+        # Project the points to the image plane
+        pc_camera = points @ w2c[:3, :3].T + w2c[:3, 3]
+        mask = pc_camera[:, 2] > 0
+        px = self.robo_memory._project_point_to_pixel(
+            pc_camera[mask], K, dist_coef,
+        )
+        u, v = px[:, 1], px[:, 0]
 
+        # Get the bounding box of the projected points
+        idx = (u >= 0) & (u < w) & (v >= 0) & (v < h)
+        u, v = u[idx], v[idx]
+
+        u = u.astype(np.int32)
+        v = v.astype(np.int32)
+
+        xmin, xmax = u.min(), u.max()
+        ymin, ymax = v.min(), v.max()
+
+        return xmin, ymin, xmax, ymax
+
+    def alan_get_observations_update_memory(
+        self,
+        fake_obs,
+        articulate_object=None,
+        event=None,
+    ):
+        obs_attr = self.robo_percept.get_attributes_from_observations(
+            fake_obs, visualize=True
+        )
+        if articulate_object is None:
+            self.robo_memory.update_memory(
+                fake_obs,
+                obs_attr,
+                self.object_level_labels,
+                filter_masks=dict(fake=None),
+                visualize=True,
+            )
+        else:
+            from utils import rotate_pcd, translate_pcd
+            fridge = articulate_object["pointcloud"]
+            joint_type = articulate_object["joint_type"]
+            
+            assert joint_type in ["revolute", "prismatic"]
+            
+            if joint_type == "revolute": 
+                rotated_fridge = rotate_pcd(
+                    pcd=fridge,
+                    hinge_axis=articulate_object["articulation_params"]["rotation_dir"],
+                    hinge_pivot=articulate_object["articulation_params"]["rotation_point"],
+                    rad=event["art_params"]["angle"],
+                )
+            else:
+                rotated_fridge = translate_pcd(
+                    pcd=fridge,
+                    direction=articulate_object["articulation_params"]["translation_dir"],
+                    amount=event["art_params"]["translation"],
+                )
+
+            contains_obs_attr = dict()
+            constrained_obs_attr = dict()
+            for view in fake_obs:
+                c2w = fake_obs[view]["c2w"]
+                w2c = np.linalg.inv(c2w)
+                
+                K = fake_obs[view]["intrinsic"]
+                dist_coef = fake_obs[view]["dist_coef"]
+    
+                before_bbox = self.get_image_bbox(
+                    w2c=w2c,
+                    points=fridge,
+                    K=K,
+                    dist_coef=dist_coef,
+                    w=fake_obs[view]["rgb"].shape[1],
+                    h=fake_obs[view]["rgb"].shape[0],
+                )
+                after_bbox = self.get_image_bbox(
+                    w2c=w2c,
+                    points=rotated_fridge,
+                    K=K,
+                    dist_coef=dist_coef,
+                    w=fake_obs[view]["rgb"].shape[1],
+                    h=fake_obs[view]["rgb"].shape[0],
+                )
+                
+                # mask = np.zeros_like(fake_obs[view]["rgb"])
+                # mask[after_bbox[1] : after_bbox[3], after_bbox[0] : after_bbox[2]] = 1
+                # from matplotlib import pyplot as plt
+                # plt.imshow(mask[..., 0].astype(bool)); plt.show()
+                # plt.imshow(fake_obs[view]["rgb"])
+                # plt.show()                
+                # valid bboxes are the ones that fall in the bbox
+                contains_list = []
+                constrained_list = []
+                for i, bbox in enumerate(obs_attr[view]["pred_boxes"]):
+                    before_valid = (
+                        bbox[0] >= before_bbox[0]
+                        and bbox[1] >= before_bbox[1]
+                        and bbox[2] <= before_bbox[2]
+                        and bbox[3] <= before_bbox[3]
+                    )
+                    after_valid = (
+                        bbox[0] >= after_bbox[0]
+                        and bbox[1] >= after_bbox[1]
+                        and bbox[2] <= after_bbox[2]
+                        and bbox[3] <= after_bbox[3]
+                    )
+    
+                    # visualize after mask
+                    mask = np.zeros_like(fake_obs[view]["rgb"])
+                    mask[after_bbox[1] : after_bbox[3], after_bbox[0] : after_bbox[2]] = 1
+    
+                    if before_valid:
+                        contains_list.append(i)
+                    if after_valid:
+                        constrained_list.append(i)
+    
+                contains_pred_phrases = [
+                    p
+                    for i, p in enumerate(obs_attr[view]["pred_phrases"])
+                    if i in contains_list
+                ]
+                contains_obs_attr[view] = {
+                    "pred_boxes": obs_attr[view]["pred_boxes"][contains_list],
+                    "pred_masks": obs_attr[view]["pred_masks"][contains_list],
+                    "pred_phrases": contains_pred_phrases,
+                    "mask_feats": obs_attr[view]["mask_feats"][contains_list],
+                }
+    
+                constrained_pred_phrases = [
+                    obs_attr[view]["pred_phrases"][i] for i in constrained_list
+                ]
+                constrained_obs_attr[view] = {
+                    "pred_boxes": obs_attr[view]["pred_boxes"][constrained_list],
+                    "pred_masks": obs_attr[view]["pred_masks"][constrained_list],
+                    "pred_phrases": constrained_pred_phrases,
+                    "mask_feats": obs_attr[view]["mask_feats"][constrained_list],
+                }
+            
+            # for v in contains_obs_attr:
+            #     print(contains_obs_attr[v]['pred_phrases'])
+            
+            self.robo_memory.update_memory(
+                fake_obs,
+                contains_obs_attr,
+                self.object_level_labels,
+                filter_masks=dict(fake=None),
+                visualize=True,
+            )
+            
+            contains_instances = copy.deepcopy(self.robo_memory.memory_instances)
+            
+            self.robo_memory.update_memory(
+                fake_obs,
+                constrained_obs_attr,
+                self.object_level_labels,
+                filter_masks=dict(fake=None),
+                visualize=True,
+            )
+            
+            constrained_instances = copy.deepcopy(self.robo_memory.memory_instances)
+            
+            return contains_instances, constrained_instances
+            
     def get_observations_update_memory(
         self,
         wrist_only=False,
@@ -162,9 +325,138 @@ class RoboAct:
             if direct_move is not None:
                 scene_graph_option["move_vec"] = direct_move["move_vec"]
             self.save_index += 1
+    
+        ##############3
+        with open("/home/exx/Downloads/tmp.pkl", "rb") as f:
+            fake_obs = pickle.load(f)
+
+        # fake_obs = {"fake_512": fake_obs["fake_512"]}
+        obs_attr = self.robo_percept.get_attributes_from_observations(fake_obs, visualize=True)
+
+        self.robo_memory.update_memory(
+            fake_obs,
+            obs_attr,
+            self.object_level_labels,
+            filter_masks=dict(fake=None),
+            visualize=True,
+        )
+        # 
+        old_instances = self.robo_memory.memory_instances.copy()
+        
+        with open("/home/exx/Downloads/tmp_2.pkl", "rb") as f:
+            fake_obs_2 = pickle.load(f)
+            
+        obs_attr_2 = self.robo_percept.get_attributes_from_observations(fake_obs_2, visualize=True)
+        
+        # edit
+        with open("/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/debug_vol_fusion/full/identified_objects.pkl", "rb") as f:
+            objects_list = pickle.load(f)
+        with open("/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/debug_vol_fusion/full/events.pkl", "rb") as f:
+            events = pickle.load(f)
+            
+        from utils import rotate_pcd
+        fridge = objects_list["object_0"]["pointcloud"]
+        rotated_fridge = rotate_pcd(pcd=fridge, hinge_axis=objects_list["object_0"]['articulation_params']["rotation_dir"], hinge_pivot=objects_list["object_0"]['articulation_params']["rotation_point"], rad=events[0]['art_params']["angle"])
+        
+        def get_image_bbox(*, w2c, points, K, w, h):
+            # Project the points to the image plane
+            pc_camera = points @ w2c[:3, :3].T + w2c[:3, 3]
+            mask = pc_camera[:, 2] > 0
+            px = self.robo_memory._project_point_to_pixel(pc_camera[mask], K, fake_obs_2[view]['dist_coef'])
+            u, v = px[:, 1], px[:, 0]
+
+            # Get the bounding box of the projected points
+            idx = (u >= 0) & (u < w) & (v >= 0) & (v < h)
+            u, v = u[idx], v[idx]
+            
+            u = u.astype(np.int32)
+            v = v.astype(np.int32)
+
+            xmin, xmax = u.min(), u.max()
+            ymin, ymax = v.min(), v.max()
+
+            return xmin, ymin, xmax, ymax
+        
+        contains_obs_attr_2 = dict()
+        constrained_obs_attr_2 = dict()
+        for view in fake_obs_2:
+            c2w = fake_obs_2[view]["c2w"]
+            w2c = np.linalg.inv(c2w)
+            
+            K = fake_obs_2[view]["intrinsic"]
+            
+            before_bbox = get_image_bbox(w2c=w2c, points=fridge, K=K, w=fake_obs_2[view]["rgb"].shape[1], h=fake_obs_2[view]["rgb"].shape[0])
+            after_bbox = get_image_bbox(w2c=w2c, points=rotated_fridge, K=K, w=fake_obs_2[view]["rgb"].shape[1], h=fake_obs_2[view]["rgb"].shape[0])
+
+            # valid bboxes are the ones that fall in the bbox
+            contains_list = []
+            constrained_list = []
+            for i, bbox in enumerate(obs_attr_2[view]["pred_boxes"]):
+                before_valid = bbox[0] >= before_bbox[0] and bbox[1] >= before_bbox[1] and bbox[2] <= before_bbox[2] and bbox[3] <= before_bbox[3]
+                after_valid = bbox[0] >= after_bbox[0] and bbox[1] >= after_bbox[1] and bbox[2] <= after_bbox[2] and bbox[3] <= after_bbox[3]
+                
+                # visualize after mask
+                mask = np.zeros_like(fake_obs_2[view]["rgb"])
+                mask[after_bbox[1]:after_bbox[3], after_bbox[0]:after_bbox[2]] = 1
+
+                if before_valid:
+                    contains_list.append(i)
+                if after_valid:
+                    constrained_list.append(i)
+            
+            
+            contains_pred_phrases = [p for i, p in enumerate(obs_attr_2[view]["pred_phrases"]) if i in contains_list]
+            contains_obs_attr_2[view] = {
+                "pred_boxes": obs_attr_2[view]["pred_boxes"][contains_list],
+                "pred_masks": obs_attr_2[view]["pred_masks"][contains_list],
+                "pred_phrases": contains_pred_phrases,
+                "mask_feats": obs_attr_2[view]["mask_feats"][contains_list],
+            }
+            
+            constrained_pred_phrases = [obs_attr_2[view]["pred_phrases"][i] for i in constrained_list]
+            constrained_obs_attr_2[view] = {
+                "pred_boxes": obs_attr_2[view]["pred_boxes"][constrained_list],
+                "pred_masks": obs_attr_2[view]["pred_masks"][constrained_list],
+                "pred_phrases": constrained_pred_phrases,
+                "mask_feats": obs_attr_2[view]["mask_feats"][constrained_list],
+            }
+            
+            
+            
+            
+            
+        
+        self.robo_memory.update_memory(
+            fake_obs_2,
+            contains_obs_attr_2,
+            self.object_level_labels,
+            filter_masks=dict(fake=None),
+            visualize=True,
+        )
+
+        
+
+        old_instance_ids = [instance.instance_id for instance in old_instances]
+        new_instances = []
+        for instance in self.robo_memory.memory_instances:
+            if instance.instance_id not in old_instance_ids:
+                new_instances.append(instance)
+        
+        i = 2        
+        new_instances[i].index_to_pcd(new_instances[i].voxel_indexes)
+        new_instances[i].label
+        len(self.robo_memory.memory_instances), len(old_instances)
+        
+        
+        
+        ##################
+        
         observation_attributes = self.robo_percept.get_attributes_from_observations(
             observations, visualize=visualize
         )
+        
+        
+        
         if COUNT_TIME:
             print(f"VLM processing takes {time.time() - start}")
             start = time.time()
