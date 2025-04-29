@@ -1502,8 +1502,9 @@ class RoboMemory:
     def remove_instance(self, instance):
         # Remove the instance from the memory
         for voxel_index in instance.voxel_indexes:
-            del self.memory_scene[voxel_index]
-            del self.memory_scene_avg[voxel_index]
+            if voxel_index in self.memory_scene:
+                del self.memory_scene[voxel_index]
+                del self.memory_scene_avg[voxel_index]
         self.memory_instances.remove(instance)
         instance.deleted = True
 

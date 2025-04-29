@@ -20,6 +20,22 @@ class myInstance:
         self.no_merge = False
         # Get the function to convert the pcd
         self.index_to_pcd = index_to_pcd
+        
+        # self.pos_parent = None
+        self.canonical_pcd = None
+        
+    def get_dict_spark(self):
+        
+        obj_pcd = self.index_to_pcd(self.voxel_indexes) if self.canonical_pcd is None else self.canonical_pcd
+        
+        return {
+            "instance_id": self.instance_id,
+            "label": self.label,
+            "confidence": self.confidence,
+            "voxel_indexes": self.voxel_indexes,
+            "feature": self.feature,
+            "canonical_pcd": obj_pcd,
+        }
 
     def get_attributes(self):
         pc = self.index_to_pcd(self.voxel_indexes)

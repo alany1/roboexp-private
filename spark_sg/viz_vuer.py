@@ -26,7 +26,7 @@ pcd_colors = (np.asarray(pcd_mesh.colors)*255).astype(np.uint8)
 async def main(sess: VuerSession):
     sess.set @ DefaultScene(
         TriMesh(vertices=hierarchy_vertices, faces=hierarchy_faces, colors=hierarchy_colors),
-        PointCloud(vertices=pcd_points, colors=pcd_colors),
+        PointCloud(vertices=pcd_points, colors=pcd_colors, size=0.1 ),
         rotation=[-np.pi/2, 0, 0],
     )
 

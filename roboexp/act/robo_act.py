@@ -10,6 +10,8 @@ import os
 import copy
 import pickle
 
+from utils import sample_convex_hull_dense_volume, axis_aligned_bbox, iou_aabb
+
 COUNT_TIME = False
 if COUNT_TIME:
     import time
@@ -103,6 +105,67 @@ class RoboAct:
         ymin, ymax = v.min(), v.max()
 
         return xmin, ymin, xmax, ymax
+    
+    def get_instance(self, instance_id):
+        for inst in self.robo_memory.memory_instances:
+            if inst.instance_id == instance_id and not inst.deleted:
+                return inst
+        return None
+    
+    def prune_memory(self, objects_list, contains_dict, constrained_dict):
+        """
+        Prune voxels and instances from the current memory, called at the end of the episode.
+        Assumes the "current_pointcloud" is the current state of each object.
+        
+        1. Clears all voxels that collide with current_pointcloud, and their associated instances and points.
+        2. if they still exist in the current memory, all contains and constrained objects are removed from \
+            the current memory, since they now belong to the object.
+        3. If not yet, their associated voxels are also pruned away. Note that this requires transforming 
+            constrained objects to get the correct pointcloud. 
+        """
+        prune_count = 0
+        densify_to = 0.01
+        
+        for obj in objects_list:
+            current_pcd = objects_list[obj]["current_pointcloud"]
+            current_pcd = sample_convex_hull_dense_volume(current_pcd, densify_to)
+            idxs = self.robo_memory.pcd_to_index(current_pcd)
+            for idx in idxs:
+                # Remove the voxel from the memory
+                if idx in self.robo_memory.memory_scene:
+                    del self.robo_memory.memory_scene[idx]
+                    del self.robo_memory.memory_scene_avg[idx]
+                    prune_count += 1
+        
+        import copy
+        # current_memory_instance_ids = [x.instance_id for x in self.robo_memory.memory_instances]
+        for k in contains_dict:
+            frozen_instance_ids = [instance.instance_id for instance in contains_dict[k]]
+            for instance_id in frozen_instance_ids:
+                r = self.get_instance(instance_id)                
+                if r is not None:
+                    prune_count += len(r.voxel_indexes)
+                    for j in range(len(contains_dict[k])):
+                        if contains_dict[k][j].instance_id == r.instance_id:
+                            contains_dict[k].pop(j)
+                            break
+
+                    contains_dict[k].append(copy.deepcopy(r))
+                    
+                    # remove from memory, since it now belongs to the object.
+                    self.robo_memory.remove_instance(r)
+
+        for k in constrained_dict:
+            frozen_instances = copy.deepcopy(constrained_dict[k])
+            for instance in frozen_instances:
+                r = self.get_instance(instance.instance_id)
+                if r is not None:
+                    prune_count += len(r.voxel_indexes)
+                    # do not overwrite constrained objects. Keep the first observed as ground truth
+                    # remove from memory, since it now belongs to the object.
+                    self.robo_memory.remove_instance(r)
+    
+        print(f"Pruned {prune_count} voxels")            
 
     def alan_get_observations_update_memory(
         self,
@@ -243,6 +306,22 @@ class RoboAct:
                 visualize=True,
             )
             
+            after_aabb = rotated_fridge.min(axis=0), rotated_fridge.max(axis=0)
+            instance = [x for x in self.robo_memory.memory_instances if "door" in x.instance_id][0]
+            memory_ious = {}
+            for instance in self.robo_memory.memory_instances:
+                
+                attr = instance.get_attributes()
+                instance_aabb = (attr["center"] - attr["size"] / 2, attr["center"] + attr["size"] / 2)
+                
+                iou = iou_aabb(after_aabb, instance_aabb)
+                memory_ious[instance.instance_id] = iou
+                
+            for k, iou in memory_ious.items():
+                if iou > 0.2:
+                    print(f"Deleting {k} with iou {iou}")
+                    self.robo_memory.memory_instances.remove(self.get_instance(k))
+                    
             constrained_instances = copy.deepcopy(self.robo_memory.memory_instances)
             
             return contains_instances, constrained_instances
