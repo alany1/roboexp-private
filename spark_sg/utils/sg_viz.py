@@ -104,6 +104,9 @@ def hierarchy_to_mesh(
     for box in id2box.values():
         centre = np.asarray(box["center"], float).reshape(3)
         size   = np.asarray(box["size"],   float).reshape(3)
+        if np.any(size <= 0):
+            # make it a bit bigger
+            size = np.maximum(size, 0.1)
 
         if show_boxes:
             m = o3d.geometry.TriangleMesh.create_box(*size)
@@ -276,6 +279,8 @@ if __name__ == "__main__":
         "/home/exx/Downloads/tmp_mesh.ply", mesh_pcd, write_ascii=False
     )
     # exit()
+    demo_hierarchy.keys()
+    
     save_hierarchy_as_ply(
         demo_hierarchy,
         "/home/exx/Downloads/hierarchy_vis.ply",

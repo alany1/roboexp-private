@@ -7,6 +7,9 @@ from roboexp import (
     RoboActReal,
 )
 
+from utils import translate_pcd, rotate_pcd
+
+
 REPLAY_FLAG = True
 robo_exp = RobotExplorationReal(gripper_length=0.285, REPLAY_FLAG=REPLAY_FLAG)
 
@@ -117,6 +120,31 @@ kwargs_batches = [{},
 #                   dict(articulate_object=objects_list["object_6"], event=events[6]),
 #                   {},
 #                   ]
+def set_parent_tf(*, articulate_object, event, related_objects):
+    # store the objects position in the world frame, but when the parent object is in its canonical pose.
+    # retrieve the objects angle from the current event, and then rotate it into canonical position.
+    articulation_type = articulate_object["joint_type"]
+    
+    assert articulation_type in ["prismatic", "revolute"]
+    
+    articulation_kwargs = {}
+    func = translate_pcd
+    if articulation_type == "prismatic":
+        articulation_kwargs["direction"] = articulate_object["articulation_params"]["translation_dir"]
+        articulation_kwargs["amount"] = -event["art_params"]["translation"]
+    else:
+        articulation_kwargs["hinge_axis"] = articulate_object["articulation_params"]["rotation_dir"]
+        articulation_kwargs["hinge_pivot"] = articulate_object["articulation_params"]["rotation_point"]
+        articulation_kwargs["rad"] = -event["art_params"]["angle"]
+        
+        func = rotate_pcd
+    
+    for obj in related_objects:
+        obj_current_pcd = obj.index_to_pcd(obj.voxel_indexes)
+        obj.canonical_pcd = func(pcd=obj_current_pcd,
+                                 **articulation_kwargs)
+    
+
 from copy import deepcopy
 contains_dict = dict()
 constrained_dict = dict()
@@ -127,7 +155,9 @@ for fake_obs, kwargs in zip(fake_obs_batches, kwargs_batches):
         contains, constrained = robo_act.alan_get_observations_update_memory(fake_obs, **kwargs)
         contains_newlist = compare(old_instances=current_instances, robo_memory=contains)
         constrained_newlist = compare(old_instances=contains, robo_memory=constrained)
-        # contains
+        
+        set_parent_tf(**kwargs, related_objects=constrained_newlist)
+        
         contains_dict[kwargs["articulate_object"]["name"]] = deepcopy(contains_newlist)
         constrained_dict[kwargs["articulate_object"]["name"]] = deepcopy(constrained_newlist)
         print(f"contains | {[x.label for x in contains_newlist]}")
@@ -135,66 +165,82 @@ for fake_obs, kwargs in zip(fake_obs_batches, kwargs_batches):
     else:
         robo_act.alan_get_observations_update_memory(fake_obs)
     current_instances = deepcopy(robo_memory.memory_instances)
-    
-import open3d as o3d
+
+
+robo_act.prune_memory(objects_list, contains_dict, constrained_dict)
+
 import numpy as np
 points = robo_memory.index_to_pcd(np.array(list(robo_memory.memory_scene.keys())))
 colors = np.array(list(robo_memory.memory_scene.values()))
+# save the full state
+with open('/home/exx/Downloads/tmp_full_state.pkl', "wb") as f:
+    data = dict(
+        current_instances=[x.get_dict_spark() for x in current_instances],
+        contains_dict={k: [x.get_dict_spark() for x in v] for k, v in contains_dict.items()},
+        constrained_dict={k: [x.get_dict_spark() for x in v] for k, v in constrained_dict.items()},
+        points=points,
+        colors=colors,
+    )
+    pickle.dump(data, f)
+    
+exit()
+
+import open3d as o3d
 pcd = o3d.geometry.PointCloud()
 pcd.points = o3d.utility.Vector3dVector(points)
 pcd.colors = o3d.utility.Vector3dVector(colors)
-o3d.io.write_point_cloud("/home/exx/Downloads/tmp_scene.ply", pcd)
-
-
-mesh_pcd = o3d.geometry.TriangleMesh()
-mesh_pcd.vertices = o3d.utility.Vector3dVector(np.asarray(points))
-mesh_pcd.vertex_colors = o3d.utility.Vector3dVector(
-                    np.asarray(colors)
-                )
-o3d.io.write_triangle_mesh("/home/exx/Downloads/tmp_mesh.ply", mesh_pcd, write_ascii=False)
-
-def write_viz_info(current_instances, contains_dict, constrained_dict, points, colors):
-    contains_info = {k: [x.instance_id for x in v] for k, v in contains_dict.items()}
-    constrained_info = {k: [x.instance_id for x in v] for k, v in constrained_dict.items()}
-    
-    all_instances = []
-    parented_instance_ids = set()
-    for k, v in contains_dict.items(): 
-        for instance in v:
-            if instance.instance_id not in parented_instance_ids:
-                all_instances.append(instance)        
-                parented_instance_ids.add(instance.instance_id)
-
-    for k, v in constrained_dict.items(): 
-        for instance in v:
-            if instance.instance_id not in parented_instance_ids:
-                all_instances.append(instance)    
-                parented_instance_ids.add(instance.instance_id)
-
-    parentless_instances = []
-    for instance in current_instances:
-        if instance.instance_id not in parented_instance_ids:
-            parentless_instances.append(instance.instance_id)
-            all_instances.append(instance)
-            
-    instance_id_to_bbox = {instance.instance_id: instance.get_attributes() for instance in all_instances} #  if np.all(instance.get_attributes()["size"]>0)} 
-    print(len(all_instances), len(instance_id_to_bbox))    
-    with open("/home/exx/Downloads/tmp_viz_info.pkl", "wb") as f:
-        pickle.dump(
-            {
-                "contains": contains_info,
-                "constrained": constrained_info,
-                "parentless_instances": parentless_instances,
-                "all_instance_ids": [instance.instance_id for instance in all_instances],
-                "instance_id_to_bbox": instance_id_to_bbox,
-                "points": points,
-                "colors": colors,
-            },
-            f,
-        )
-    print(f"Done writing!")
-
-write_viz_info(current_instances, contains_dict, constrained_dict, points, colors)
+o3d.io.write_point_cloud("/home/exx/Downloads/tmp_scene_2.ply", pcd)
+# 
+# 
+# mesh_pcd = o3d.geometry.TriangleMesh()
+# mesh_pcd.vertices = o3d.utility.Vector3dVector(np.asarray(points))
+# mesh_pcd.vertex_colors = o3d.utility.Vector3dVector(
+#                     np.asarray(colors)
+#                 )
+# o3d.io.write_triangle_mesh("/home/exx/Downloads/tmp_mesh.ply", mesh_pcd, write_ascii=False)
+# 
+# def write_viz_info(current_instances, contains_dict, constrained_dict, points, colors):
+#     contains_info = {k: [x.instance_id for x in v] for k, v in contains_dict.items()}
+#     constrained_info = {k: [x.instance_id for x in v] for k, v in constrained_dict.items()}
+#     
+#     all_instances = []
+#     parented_instance_ids = set()
+#     for k, v in contains_dict.items(): 
+#         for instance in v:
+#             if instance.instance_id not in parented_instance_ids:
+#                 all_instances.append(instance)        
+#                 parented_instance_ids.add(instance.instance_id)
+# 
+#     for k, v in constrained_dict.items(): 
+#         for instance in v:
+#             if instance.instance_id not in parented_instance_ids:
+#                 all_instances.append(instance)    
+#                 parented_instance_ids.add(instance.instance_id)
+# 
+#     parentless_instances = []
+#     for instance in current_instances:
+#         if instance.instance_id not in parented_instance_ids:
+#             parentless_instances.append(instance.instance_id)
+#             all_instances.append(instance)
+#             
+#     instance_id_to_bbox = {instance.instance_id: instance.get_attributes() for instance in all_instances} #  if np.all(instance.get_attributes()["size"]>0)} 
+#     print(len(all_instances), len(instance_id_to_bbox))    
+#     with open("/home/exx/Downloads/tmp_viz_info.pkl", "wb") as f:
+#         pickle.dump(
+#             {
+#                 "contains": contains_info,
+#                 "constrained": constrained_info,
+#                 "parentless_instances": parentless_instances,
+#                 "all_instance_ids": [instance.instance_id for instance in all_instances],
+#                 "instance_id_to_bbox": instance_id_to_bbox,
+#                 "points": points,
+#                 "colors": colors,
+#             },
+#             f,
+#         )
+#     print("Done writing!")
+# 
+# write_viz_info(current_instances, contains_dict, constrained_dict, points, colors)
 exit()
 
 d = [x.get_attributes() for x in current_instances if np.all(x.get_attributes()["size"]>0)]
@@ -225,8 +271,6 @@ boxes_to_ply_fixed.py  –  save a list of axis-aligned boxes to one PLY mesh
 boxes = [{"center": np.ndarray(3,), "size": np.ndarray(3,)}]
 """
 
-from pathlib import Path
-from typing import List, Dict
 import numpy as np
 import open3d as o3d
 

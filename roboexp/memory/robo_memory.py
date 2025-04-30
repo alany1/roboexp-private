@@ -5,6 +5,7 @@ import numpy as np
 import pickle
 import open3d as o3d
 import cv2
+from skimage import measure
 
 COUNT_TIME = False
 if COUNT_TIME:
@@ -823,7 +824,7 @@ class RoboMemory:
         if COUNT_TIME:
             print(f"Memory: Merging: the filtering takes {time.time() - start}")
         if visualize and False:
-            print(f"Visualizing the merged PC")
+            print("Visualizing the merged PC")
             visualize_pc(
                 self.index_to_pcd(np.array(list(merged_scene.keys()))),
                 np.array(list(merged_scene.values())),
@@ -844,7 +845,7 @@ class RoboMemory:
         # Clean the old stuffs from the old memory
         # Update the memory based on the new observation depth test: delete some out-of-date voxels
         if visualize and False:
-            print(f"Visualizing the memory PC Before deleting out-of-date voxels")
+            print("Visualizing the memory PC Before deleting out-of-date voxels")
             visualize_pc(
                 self.index_to_pcd(np.array(list(self.memory_scene.keys()))),
                 np.array(list(self.memory_scene.values())),
@@ -859,7 +860,7 @@ class RoboMemory:
         )
 
         if visualize and False:
-            print(f"Visualizing the merged PC")
+            print("Visualizing the merged PC")
             visualize_pc(
                 self.index_to_pcd(np.array(list(merged_scene.keys()))),
                 np.array(list(merged_scene.values())),
@@ -867,7 +868,7 @@ class RoboMemory:
             )
 
         if visualize and False:
-            print(f"Visualizing the memory PC after deleting out-of-date voxels")
+            print("Visualizing the memory PC after deleting out-of-date voxels")
             visualize_pc(
                 self.index_to_pcd(np.array(list(self.memory_scene.keys()))),
                 np.array(list(self.memory_scene.values())),
@@ -915,7 +916,7 @@ class RoboMemory:
                     instance.deleted = True
 
         if visualize:
-            print(f"Visualizing the memory PC")
+            print("Visualizing the memory PC")
             visualize_pc(
                 self.index_to_pcd(np.array(list(self.memory_scene.keys()))),
                 np.array(list(self.memory_scene.values())),
@@ -1545,3 +1546,27 @@ class RoboMemory:
             np.array(list(self.memory_scene.values()))
         )
         o3d.io.write_point_cloud("memory.ply", pcd)
+        
+    def fuse_scene_mesh(self, out_path):
+        occ   = np.zeros(tuple(self.voxel_num), dtype=bool)      # (Dz, Dy, Dx)
+
+        # keys are flattened indices → convert back to (z,y,x) voxels
+        idx   = np.fromiter(self.memory_scene.keys(), dtype=np.int64)
+        ijk   = self.index_to_voxel(idx)                         # (N,3) ints
+        occ[tuple(ijk.T)] = True
+
+        # ---- 2. Marching cubes  --------------------------------------------------
+        vsz = self.voxel_size          # metres per voxel edge
+        verts, faces, norms, _ = measure.marching_cubes(
+            occ, level=0.5, spacing=(vsz, vsz, vsz))            # :contentReference[oaicite:0]{index=0}
+
+        # shift from grid origin to world origin
+        verts_world = verts + self.lower_bound                   # (N,3) float64
+
+        # ---- 3. Dump to disk (Open3D here; any lib is fine) ----------------------
+        mesh = o3d.geometry.TriangleMesh(
+            o3d.utility.Vector3dVector(verts_world),
+            o3d.utility.Vector3iVector(faces))
+        mesh.compute_vertex_normals()
+        o3d.io.write_triangle_mesh(out_path, mesh)
+        return mesh

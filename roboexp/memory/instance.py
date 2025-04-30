@@ -35,6 +35,7 @@ class myInstance:
             "voxel_indexes": self.voxel_indexes,
             "feature": self.feature,
             "canonical_pcd": obj_pcd,
+            "attributes": self.get_attributes(),
         }
 
     def get_attributes(self):
