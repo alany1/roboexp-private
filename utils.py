@@ -1,7 +1,7 @@
 from scipy.ndimage import binary_dilation
 import numpy as np
 import torch
-
+import math
 
 def backproject_points_cam(*, depth, pose, fx, fy, cx, cy, depth_range=(0.1, 5.0), seg=None, device="cuda", aria_rot=True):
     """
@@ -297,3 +297,100 @@ def iou_aabb(box1, box2):
     vol2 = np.prod(np.maximum(0.0, b2_max - b2_min))
 
     return inter_vol / (vol1 + vol2 - inter_vol)
+
+def pick(d, *keys, strict=False):
+    """Pick keys"""
+    _d = {}
+    for k in keys:
+        if k in d:
+            _d[k] = d[k]
+        elif strict:
+            raise KeyError(k)
+    return _d
+
+
+def sample_bbox_dense_volume(points, d, oversample_surface: int = 2):
+    """
+    Sample a regular 3-D grid that *densely* covers the **axis-aligned bounding-box**
+    (AABB) of the input points, plus a denser 2-D grid on each of the six faces.
+
+    Any location inside the AABB is guaranteed to lie within ≤ d of at least one
+    returned sample.
+
+    Parameters
+    ----------
+    points : (N, 3) array-like
+        Input point cloud (only its AABB is used).
+    d : float
+        Maximum admissible “hole” radius (coverage distance).
+    oversample_surface : int, default=2
+        How many times **denser** the face grids should be, relative to the interior
+        spacing.  (1 ⇒ same spacing as interior; 2 ⇒ twice as dense, etc.)
+
+    Returns
+    -------
+    samples : (M, 3) `np.ndarray`
+        The concatenated 3-D interior samples and the 2-D face samples.
+    """
+    points = np.asarray(points, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError("`points` must be an (N, 3) array")
+
+    # ---------------------------------------------------------------------
+    # 1) grid spacing for full 3-D coverage
+    #    – farthest distance from a grid centre in a cube of edge s is √3·s/2
+    #      ⇒ choose s so that √3·s/2 ≤ d  ⇒  s = 2d / √3
+    step_3d = 2.0 * d / math.sqrt(3)
+
+    # ---------------------------------------------------------------------
+    # 2) axis-aligned bounding box (no padding)
+    bb_min = points.min(axis=0)
+    bb_max = points.max(axis=0)
+
+    # Ensure the extremes are included by adding half a step
+    xs = np.arange(bb_min[0], bb_max[0] + step_3d * 0.5, step_3d)
+    ys = np.arange(bb_min[1], bb_max[1] + step_3d * 0.5, step_3d)
+    zs = np.arange(bb_min[2], bb_max[2] + step_3d * 0.5, step_3d)
+
+    # 3-D interior grid ----------------------------------------------------
+    grid_xyz = np.stack(np.meshgrid(xs, ys, zs, indexing="ij"), axis=-1).reshape(-1, 3)
+
+    # ---------------------------------------------------------------------
+    # 3) face sampling (denser 2-D grids)
+    step_2d = step_3d / oversample_surface
+    faces = []
+
+    # For each pair of axes, fix one coordinate at min or max and sample a 2-D grid
+    def _surf_grid(fixed_axis, fixed_val):
+        a, b = [ax for ax in range(3) if ax != fixed_axis]
+        u = np.arange(bb_min[a], bb_max[a] + step_2d * 0.5, step_2d)
+        v = np.arange(bb_min[b], bb_max[b] + step_2d * 0.5, step_2d)
+        m, n = np.meshgrid(u, v, indexing="ij")
+        pts = np.zeros((m.size, 3))
+        pts[:, fixed_axis] = fixed_val
+        pts[:, a] = m.ravel()
+        pts[:, b] = n.ravel()
+        return pts
+
+    for axis in range(3):
+        faces.append(_surf_grid(axis, bb_min[axis]))  # “minus” face
+        faces.append(_surf_grid(axis, bb_max[axis]))  # “plus”  face
+
+    surf_pts = np.vstack(faces)
+
+    # ---------------------------------------------------------------------
+    # 4) merge & return
+    return np.vstack((grid_xyz, surf_pts))
+
+if __name__ == '__main__':
+    import pickle
+    with open(f"/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/debug_vol_fusion/full/identified_objects.pkl", "rb") as f:
+        identified_objects = pickle.load(f)
+
+    import open3d as o3d
+    pcd = o3d.geometry.PointCloud()    
+    x = sample_bbox_dense_volume(identified_objects["object_0"]["current_pointcloud"], 0.01)
+    pcd.points = o3d.utility.Vector3dVector(x)
+    
+    o3d.io.write_point_cloud("/home/exx/Downloads/identified_objects.ply", pcd)
+    

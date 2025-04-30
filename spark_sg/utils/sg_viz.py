@@ -101,7 +101,7 @@ def hierarchy_to_mesh(
 
     # --------------------------- layer-0  (boxes) ----------------------
     top_z = -np.inf
-    for box in id2box.values():
+    for _k, box in id2box.items():
         centre = np.asarray(box["center"], float).reshape(3)
         size   = np.asarray(box["size"],   float).reshape(3)
         if np.any(size <= 0):
@@ -109,10 +109,18 @@ def hierarchy_to_mesh(
             size = np.maximum(size, 0.1)
 
         if show_boxes:
-            m = o3d.geometry.TriangleMesh.create_box(*size)
-            m.translate(centre - size / 2)
-            m.paint_uniform_color(np.random.rand(3))
-            merged += m
+ #            if _k in [
+ #  'oven_12_instance',
+ # 'oven_18_instance',
+ # 'oven_19_instance',
+ # 'oven_24_instance',
+ # 'oven_6_instance',
+ #                      ]:
+                print(_k)
+                m = o3d.geometry.TriangleMesh.create_box(*size)
+                m.translate(centre - size / 2)
+                m.paint_uniform_color(np.random.rand(3))
+                merged += m
 
         top_z = max(top_z, centre[2] + size[2] / 2)
 

@@ -10,7 +10,9 @@ import os
 import copy
 import pickle
 
-from utils import sample_convex_hull_dense_volume, axis_aligned_bbox, iou_aabb
+from collections import defaultdict
+
+from utils import sample_convex_hull_dense_volume, axis_aligned_bbox, iou_aabb, sample_bbox_dense_volume
 
 COUNT_TIME = False
 if COUNT_TIME:
@@ -85,10 +87,15 @@ class RoboAct:
             [0.56, 0.6],
         ]
         self.idle_flag = [True, True, True, True, True]
+        
+        self.previous_object_states = defaultdict(lambda: 0)
+        
     def get_image_bbox(self, *, w2c, points, K, dist_coef, w, h):
         # Project the points to the image plane
         pc_camera = points @ w2c[:3, :3].T + w2c[:3, 3]
         mask = pc_camera[:, 2] > 0
+        if mask.sum() == 0:
+            return 0, 0, 0, 0
         px = self.robo_memory._project_point_to_pixel(
             pc_camera[mask], K, dist_coef,
         )
@@ -97,10 +104,13 @@ class RoboAct:
         # Get the bounding box of the projected points
         idx = (u >= 0) & (u < w) & (v >= 0) & (v < h)
         u, v = u[idx], v[idx]
+        
+        if len(u) == 0:
+            return 0, 0, 0, 0
 
         u = u.astype(np.int32)
         v = v.astype(np.int32)
-
+        
         xmin, xmax = u.min(), u.max()
         ymin, ymax = v.min(), v.max()
 
@@ -108,7 +118,7 @@ class RoboAct:
     
     def get_instance(self, instance_id):
         for inst in self.robo_memory.memory_instances:
-            if inst.instance_id == instance_id and not inst.deleted:
+            if inst.instance_id == instance_id: #  and not inst.deleted:
                 return inst
         return None
     
@@ -128,7 +138,8 @@ class RoboAct:
         
         for obj in objects_list:
             current_pcd = objects_list[obj]["current_pointcloud"]
-            current_pcd = sample_convex_hull_dense_volume(current_pcd, densify_to)
+            # current_pcd = sample_convex_hull_dense_volume(current_pcd, densify_to)
+            current_pcd = sample_bbox_dense_volume(current_pcd, densify_to)
             idxs = self.robo_memory.pcd_to_index(current_pcd)
             for idx in idxs:
                 # Remove the voxel from the memory
@@ -154,12 +165,13 @@ class RoboAct:
                     
                     # remove from memory, since it now belongs to the object.
                     self.robo_memory.remove_instance(r)
-
+        [x.instance_id for x in self.robo_memory.memory_instances]
         for k in constrained_dict:
             frozen_instances = copy.deepcopy(constrained_dict[k])
             for instance in frozen_instances:
                 r = self.get_instance(instance.instance_id)
                 if r is not None:
+                    print(r.instance_id)
                     prune_count += len(r.voxel_indexes)
                     # do not overwrite constrained objects. Keep the first observed as ground truth
                     # remove from memory, since it now belongs to the object.
@@ -172,9 +184,11 @@ class RoboAct:
         fake_obs,
         articulate_object=None,
         event=None,
+        discovery=True,
+        densify_to=0.01,
     ):
         obs_attr = self.robo_percept.get_attributes_from_observations(
-            fake_obs, visualize=True
+            fake_obs, visualize=False
         )
         if articulate_object is None:
             self.robo_memory.update_memory(
@@ -182,14 +196,16 @@ class RoboAct:
                 obs_attr,
                 self.object_level_labels,
                 filter_masks=dict(fake=None),
-                visualize=True,
+                visualize=False,
             )
         else:
             from utils import rotate_pcd, translate_pcd
             fridge = articulate_object["pointcloud"]
             joint_type = articulate_object["joint_type"]
+            previous_state = self.previous_object_states[articulate_object["name"]]
             
             assert joint_type in ["revolute", "prismatic"]
+            
             
             if joint_type == "revolute": 
                 rotated_fridge = rotate_pcd(
@@ -198,12 +214,27 @@ class RoboAct:
                     hinge_pivot=articulate_object["articulation_params"]["rotation_point"],
                     rad=event["art_params"]["angle"],
                 )
+                _prune_pcd = rotate_pcd(
+                    pcd=fridge,
+                    hinge_axis=articulate_object["articulation_params"]["rotation_dir"],
+                    hinge_pivot=articulate_object["articulation_params"]["rotation_point"],
+                    rad=previous_state,
+                )
+                prune_pcd = sample_convex_hull_dense_volume(_prune_pcd, densify_to)
+                self.previous_object_states[articulate_object["name"]] = event["art_params"]["angle"]
             else:
                 rotated_fridge = translate_pcd(
                     pcd=fridge,
                     direction=articulate_object["articulation_params"]["translation_dir"],
                     amount=event["art_params"]["translation"],
                 )
+                _prune_pcd = translate_pcd(
+                    pcd=fridge,
+                    direction=articulate_object["articulation_params"]["translation_dir"],
+                    amount=previous_state,
+                )
+                prune_pcd = sample_convex_hull_dense_volume(_prune_pcd, densify_to)
+                self.previous_object_states[articulate_object["name"]] = event["art_params"]["translation"]
 
             contains_obs_attr = dict()
             constrained_obs_attr = dict()
@@ -285,46 +316,68 @@ class RoboAct:
                     "mask_feats": obs_attr[view]["mask_feats"][constrained_list],
                 }
             
-            # for v in contains_obs_attr:
-            #     print(contains_obs_attr[v]['pred_phrases'])
-            
-            self.robo_memory.update_memory(
-                fake_obs,
-                contains_obs_attr,
-                self.object_level_labels,
-                filter_masks=dict(fake=None),
-                visualize=True,
-            )
-            
-            contains_instances = copy.deepcopy(self.robo_memory.memory_instances)
-            
-            self.robo_memory.update_memory(
-                fake_obs,
-                constrained_obs_attr,
-                self.object_level_labels,
-                filter_masks=dict(fake=None),
-                visualize=True,
-            )
-            
-            after_aabb = rotated_fridge.min(axis=0), rotated_fridge.max(axis=0)
-            instance = [x for x in self.robo_memory.memory_instances if "door" in x.instance_id][0]
-            memory_ious = {}
-            for instance in self.robo_memory.memory_instances:
+            if discovery:
                 
-                attr = instance.get_attributes()
-                instance_aabb = (attr["center"] - attr["size"] / 2, attr["center"] + attr["size"] / 2)
+                self.robo_memory.update_memory(
+                    fake_obs,
+                    contains_obs_attr,
+                    self.object_level_labels,
+                    filter_masks=dict(fake=None),
+                    visualize=False,
+                    prune_pcd=prune_pcd,
+                )
                 
-                iou = iou_aabb(after_aabb, instance_aabb)
-                memory_ious[instance.instance_id] = iou
+                contains_instances = copy.deepcopy(self.robo_memory.memory_instances)
                 
-            for k, iou in memory_ious.items():
-                if iou > 0.2:
-                    print(f"Deleting {k} with iou {iou}")
-                    self.robo_memory.memory_instances.remove(self.get_instance(k))
+                self.robo_memory.update_memory(
+                    fake_obs,
+                    constrained_obs_attr,
+                    self.object_level_labels,
+                    filter_masks=dict(fake=None),
+                    visualize=False,
+                    prune_pcd=prune_pcd,
+                )
+                
+                after_aabb = rotated_fridge.min(axis=0), rotated_fridge.max(axis=0)
+                memory_ious = {}
+                for instance in self.robo_memory.memory_instances:
                     
-            constrained_instances = copy.deepcopy(self.robo_memory.memory_instances)
+                    attr = instance.get_attributes()
+                    instance_aabb = (attr["center"] - attr["size"] / 2, attr["center"] + attr["size"] / 2)
+                    
+                    iou = iou_aabb(after_aabb, instance_aabb)
+                    memory_ious[instance.instance_id] = iou
+                    
+                for k, iou in memory_ious.items():
+                    if iou > 0.2:
+                        print(f"Deleting {k} with iou {iou}")
+                        self.robo_memory.memory_instances.remove(self.get_instance(k))
+                        
+                constrained_instances = copy.deepcopy(self.robo_memory.memory_instances)
+                
+                return contains_instances, constrained_instances
             
-            return contains_instances, constrained_instances
+            else:
+                # import open3d as o3d
+                # # visualize the pcd
+                # pcd = o3d.geometry.PointCloud()
+                # pcd.points = o3d.utility.Vector3dVector(prune_pcd)
+                # o3d.io.write_point_cloud("/home/exx/Downloads/prune.ply", pcd)
+                # 
+                # scene_pcd = o3d.geometry.PointCloud()
+                # scene_pcd.points = o3d.utility.Vector3dVector(self.robo_memory.index_to_pcd(list(self.robo_memory.memory_scene.keys())))
+                # o3d.io.write_point_cloud("/home/exx/Downloads/scene.ply", scene_pcd)
+
+                
+                self.robo_memory.update_memory(
+                    fake_obs,
+                    obs_attr,
+                    self.object_level_labels,
+                    filter_masks=dict(fake=None),
+                    visualize=False,
+                    prune_pcd=prune_pcd,
+                )
+            
             
     def get_observations_update_memory(
         self,

@@ -97,6 +97,7 @@ class RoboMemory:
         update_scene_graph=False,
         scene_graph_option=None,
         visualize=False,
+        prune_pcd=None,
     ):
         # Merge the observations in current timestep
         if COUNT_TIME:
@@ -120,6 +121,7 @@ class RoboMemory:
             observations,
             direct_move=direct_move,
             visualize=visualize,
+            prune_pcd=prune_pcd,
         )
         if COUNT_TIME:
             print(f"Memory: Updating the memory takes {time.time() - start}")
@@ -841,6 +843,7 @@ class RoboMemory:
         observations,
         direct_move=None,
         visualize=False,
+        prune_pcd=None,
     ):
         # Clean the old stuffs from the old memory
         # Update the memory based on the new observation depth test: delete some out-of-date voxels
@@ -856,7 +859,7 @@ class RoboMemory:
             start = time.time()
 
         self._update_memory_with_new_observations(
-            observations, merged_scene, direct_move=direct_move
+            observations, merged_scene, direct_move=direct_move, prune_pcd=prune_pcd,
         )
 
         if visualize and False:
@@ -1295,7 +1298,7 @@ class RoboMemory:
         return merged_instances, merged_scene
 
     def _update_memory_with_new_observations(
-        self, observations, merged_scene, direct_move=None, visualize=False
+        self, observations, merged_scene, direct_move=None, visualize=False, prune_pcd=None,
     ):
         if len(self.memory_scene) == 0:
             return
@@ -1334,6 +1337,8 @@ class RoboMemory:
             color_depth_thres=0,
             color_thres=0.1,
         )
+        
+        deleted_indexes = list(set(deleted_indexes) | set(self._intermediate_prune(prune_pcd)))
         # No need to delete the voxels that's also in the new scene, but this may influence the dynamic change, let's see
         deleted_indexes = list(set(deleted_indexes) - set(merged_scene.keys()))
 
@@ -1368,6 +1373,19 @@ class RoboMemory:
                 extra=display,
             )
 
+    def _intermediate_prune(self, prune_pcd):
+        if prune_pcd is None:
+            return []
+        
+        prune_indexes = []
+        for idx in self.pcd_to_index(prune_pcd):
+            if idx in self.memory_scene:
+                prune_indexes.append(idx)
+        
+        return prune_indexes
+    
+        
+    
     def _depth_test(
         self,
         voxel_indexes,

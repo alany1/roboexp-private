@@ -4,6 +4,9 @@ from utils import rotate_pcd, translate_pcd
 import numpy as np
 import open3d as o3d
 
+from killport import kill_ports
+kill_ports(ports=[8012])
+
 def get_hull(points):
     pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
     hull, _ = pcd.compute_convex_hull()
@@ -149,7 +152,7 @@ app = Vuer(queries=dict(show_grid=False))
 
 @app.spawn(start=True)
 async def main(sess: VuerSession):
-    with open("/home/exx/Downloads/tmp_full_state.pkl", "rb") as f:
+    with open("/home/exx/Downloads/spark_states_v7/final_state.pkl", "rb") as f:
         state = pickle.load(f)
     with open("/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/debug_vol_fusion/full/identified_objects.pkl", "rb") as f:
         identified_objects = pickle.load(f)
@@ -157,13 +160,13 @@ async def main(sess: VuerSession):
     articulate_parts = load_articulate_parts(identified_objects)
     parts = load_vuer_parts(articulate_parts)
     
-    h_v, h_f, h_c = get_hierarchy(state)
+    h_v, h_f, h_c = get_hierarchy(state, show_boxes=True)
     pcd_points, pcd_colors = get_pcd(state)
     
     sess.set @ Scene(
         TriMesh(vertices=h_v, faces=h_f, colors=h_c),
-        PointCloud(vertices=pcd_points, colors=pcd_colors, size=0.1 ),
-        *parts,
+        PointCloud(vertices=pcd_points, colors=pcd_colors, size=0.025 ),
+        # *parts,
         rotation=[-np.pi/2, 0, 0],
     )
     
@@ -184,9 +187,9 @@ async def main(sess: VuerSession):
     }
     
     while True:
-        for k in identified_objects:
-            sess.upsert @ articulate(k, articulation_wrapper(i, fps, **limits[k]), articulate_parts, identified_objects)
-            
+        # for k in identified_objects:
+        #     sess.upsert @ articulate(k, articulation_wrapper(i, fps, **limits[k]), articulate_parts, identified_objects)
+        #     
         # print(i)
         i += 1
         

@@ -4,11 +4,17 @@ import pickle
 
 root = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901"
 
-# all_ts = [200, 210, 220, 230]
-# all_ts = [340, 350, 360, 380]
-# all_ts = [505, 525, 535, 550]
+# all_ts = [[30, 60, 90, 120, 150], [200, 210, 220, 230], [340, 350, 360, 380], [505, 525, 535, 550], [626, 630, 635], [675, 700, 740, 770], [825, 850, 875, 890], [1000, 1050, 1100, 1150], [1260, 1350, 1400, 1450], [1550, 1555, 1560, 1565]]
 
-all_ts = [[200, 210, 220, 230], [340, 350, 360, 380], [505, 525, 535, 550], [626, 630, 635], [675, 700, 740, 770], [825, 850, 875, 890], [1000, 1050, 1100, 1150], [1260, 1350, 1400, 1450], [1550, 1555, 1560, 1565]]
+with open(f"{root}/keyframes.pkl", "rb") as f:
+    keyframes = pickle.load(f)
+    
+all_ts = []
+frames_per_obs = 10
+for start, end in keyframes[:-1]:
+    all_ts.append(list(range(start, end, frames_per_obs)))
+    
+all_ts.append([1550, 1555, 1560, 1565])
 
 def make(ts):
     rgb = f"{root}/renders/rgb/{ts:04d}.jpg"
@@ -79,19 +85,10 @@ def make(ts):
     )
     return fake_obs
 
-# fake_obs = dict()
-# for ts in all_ts:
-#     fake_obs[f"fake_{ts}"] = make(ts)
-#     # print(fake_obs["position"].shape, fake_obs["rgb"].shape, fake_obs["depths"].shape, fake_obs["mask"].shape, fake_obs["c2w"].shape, fake_obs["intrinsic"].shape, fake_obs["dist_coef"].shape)
-# 
-# with open("/home/exx/Downloads/tmp_3.pkl", "wb") as f:
-#     import pickle
-#     pickle.dump(fake_obs, f)
-
 for i, ts_batch in enumerate(all_ts):
     fake_obs = dict()
     for ts in ts_batch:
         fake_obs[f"fake_{ts}"] = make(ts)
     
-    with open(f"/home/exx/Downloads/tmp_{i}.pkl", "wb") as f:
+    with open(f"/home/exx/Downloads/even_denser/tmp_{i}.pkl", "wb") as f:
         pickle.dump(fake_obs, f)
