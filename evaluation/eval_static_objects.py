@@ -58,7 +58,8 @@ class StaticObjectEvaluator:
 
             # pred_bbox_bounds = np.array(corners_to_bbox(np.array(pred_bbox)))
 
-            best = max(cands, key=lambda g: bbox_iou(pred_bbox, np.array(self.gt[g]["bbox"])))
+            # best = max(cands, key=lambda g: bbox_iou(pred_bbox, np.array(self.gt[g]["bbox"])))
+            best = min(cands, key =lambda g: np.linalg.norm(np.mean(np.array(self.gt[g]["bbox"]), axis=0) - pred_center))
 
             name, gt_bbox, gt_pose = best, self.gt[best]["bbox"], None
             iou = bbox_iou(pred_bbox, np.array(gt_bbox))
@@ -106,7 +107,6 @@ if __name__ == '__main__':
     gt_bone_bboxes_json = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/object_labels/bone_bboxes.json"
 
     final_state = "/home/exx/Downloads/spark_states_v8/final_state.pkl"
-    identified_objects = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/debug_vol_fusion/identified_objects.pkl"
 
     label_space_path = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/semantic_labeling/label_space.yaml"
     with open(label_space_path, "r") as f:
