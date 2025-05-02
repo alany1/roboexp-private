@@ -1,7 +1,7 @@
 import numpy as np
+from spark_sg import USE_SEMANTICS
 
 instance_label_counts = {}
-
 
 class myInstance:
     def __init__(self, label, confidence, voxel_indexes, feature, index_to_pcd):
@@ -57,6 +57,8 @@ class myInstance:
         return intersection / union
 
     def get_similarity(self, instance):
+        if USE_SEMANTICS:
+            return float(self.label==instance.label)
         similarity = (
             np.dot(self.feature, instance.feature)
             / np.linalg.norm(self.feature)
@@ -68,9 +70,11 @@ class myInstance:
         self.voxel_indexes = list(
             set(self.voxel_indexes).union(set(instance.voxel_indexes))
         )
-        weight = self.confidence / (self.confidence + instance.confidence)
-        self.feature = weight * self.feature + (1 - weight) * instance.feature
-        self.feature /= np.linalg.norm(self.feature)
+        if not USE_SEMANTICS:
+            weight = self.confidence / (self.confidence + instance.confidence)
+            self.feature = weight * self.feature + (1 - weight) * instance.feature
+            self.feature /= np.linalg.norm(self.feature)
+            
         if self.confidence < instance.confidence:
             self.label = instance.label
             self.confidence = instance.confidence

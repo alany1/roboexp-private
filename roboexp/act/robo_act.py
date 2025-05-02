@@ -14,7 +14,7 @@ from collections import defaultdict
 
 from utils import sample_convex_hull_dense_volume, axis_aligned_bbox, iou_aabb, sample_bbox_dense_volume
 
-COUNT_TIME = False
+COUNT_TIME = True
 if COUNT_TIME:
     import time
 
@@ -90,7 +90,7 @@ class RoboAct:
         
         self.previous_object_states = defaultdict(lambda: 0)
         
-    def get_image_bbox(self, *, w2c, points, K, dist_coef, w, h):
+    def get_image_bbox(self, *, w2c, points, K, dist_coef, w, h, return_pc_camera=False):
         # Project the points to the image plane
         pc_camera = points @ w2c[:3, :3].T + w2c[:3, 3]
         mask = pc_camera[:, 2] > 0
@@ -114,6 +114,10 @@ class RoboAct:
         xmin, xmax = u.min(), u.max()
         ymin, ymax = v.min(), v.max()
 
+        if return_pc_camera:
+            pc_camera = pc_camera[mask]
+            pc_camera = pc_camera[idx]
+            return xmin, ymin, xmax, ymax, pc_camera
         return xmin, ymin, xmax, ymax
     
     def get_instance(self, instance_id):
@@ -236,88 +240,146 @@ class RoboAct:
                 prune_pcd = sample_convex_hull_dense_volume(_prune_pcd, densify_to)
                 self.previous_object_states[articulate_object["name"]] = event["art_params"]["translation"]
 
-            contains_obs_attr = dict()
-            constrained_obs_attr = dict()
-            for view in fake_obs:
-                c2w = fake_obs[view]["c2w"]
-                w2c = np.linalg.inv(c2w)
-                
-                K = fake_obs[view]["intrinsic"]
-                dist_coef = fake_obs[view]["dist_coef"]
     
-                before_bbox = self.get_image_bbox(
-                    w2c=w2c,
-                    points=fridge,
-                    K=K,
-                    dist_coef=dist_coef,
-                    w=fake_obs[view]["rgb"].shape[1],
-                    h=fake_obs[view]["rgb"].shape[0],
-                )
-                after_bbox = self.get_image_bbox(
-                    w2c=w2c,
-                    points=rotated_fridge,
-                    K=K,
-                    dist_coef=dist_coef,
-                    w=fake_obs[view]["rgb"].shape[1],
-                    h=fake_obs[view]["rgb"].shape[0],
-                )
-                
-                # mask = np.zeros_like(fake_obs[view]["rgb"])
-                # mask[after_bbox[1] : after_bbox[3], after_bbox[0] : after_bbox[2]] = 1
-                # from matplotlib import pyplot as plt
-                # plt.imshow(mask[..., 0].astype(bool)); plt.show()
-                # plt.imshow(fake_obs[view]["rgb"])
-                # plt.show()                
-                # valid bboxes are the ones that fall in the bbox
-                contains_list = []
-                constrained_list = []
-                for i, bbox in enumerate(obs_attr[view]["pred_boxes"]):
-                    before_valid = (
-                        bbox[0] >= before_bbox[0]
-                        and bbox[1] >= before_bbox[1]
-                        and bbox[2] <= before_bbox[2]
-                        and bbox[3] <= before_bbox[3]
-                    )
-                    after_valid = (
-                        bbox[0] >= after_bbox[0]
-                        and bbox[1] >= after_bbox[1]
-                        and bbox[2] <= after_bbox[2]
-                        and bbox[3] <= after_bbox[3]
-                    )
-    
-                    # visualize after mask
-                    mask = np.zeros_like(fake_obs[view]["rgb"])
-                    mask[after_bbox[1] : after_bbox[3], after_bbox[0] : after_bbox[2]] = 1
-    
-                    if before_valid:
-                        contains_list.append(i)
-                    if after_valid:
-                        constrained_list.append(i)
-    
-                contains_pred_phrases = [
-                    p
-                    for i, p in enumerate(obs_attr[view]["pred_phrases"])
-                    if i in contains_list
-                ]
-                contains_obs_attr[view] = {
-                    "pred_boxes": obs_attr[view]["pred_boxes"][contains_list],
-                    "pred_masks": obs_attr[view]["pred_masks"][contains_list],
-                    "pred_phrases": contains_pred_phrases,
-                    "mask_feats": obs_attr[view]["mask_feats"][contains_list],
-                }
-    
-                constrained_pred_phrases = [
-                    obs_attr[view]["pred_phrases"][i] for i in constrained_list
-                ]
-                constrained_obs_attr[view] = {
-                    "pred_boxes": obs_attr[view]["pred_boxes"][constrained_list],
-                    "pred_masks": obs_attr[view]["pred_masks"][constrained_list],
-                    "pred_phrases": constrained_pred_phrases,
-                    "mask_feats": obs_attr[view]["mask_feats"][constrained_list],
-                }
+            def get_cvx_hull(points):
+                pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+                hull, _ = pcd.compute_convex_hull()
+                hull.remove_duplicated_vertices()
+                return hull
             
             if discovery:
+                contains_obs_attr = dict()
+                constrained_obs_attr = dict()
                 
+                for view in fake_obs:
+                    c2w = fake_obs[view]["c2w"]
+                    w2c = np.linalg.inv(c2w)
+                    
+                    K = fake_obs[view]["intrinsic"]
+                    dist_coef = fake_obs[view]["dist_coef"]
+        
+                    *before_bbox, before_pcd_cam = self.get_image_bbox(
+                        w2c=w2c,
+                        points=fridge,
+                        K=K,
+                        dist_coef=dist_coef,
+                        w=fake_obs[view]["rgb"].shape[1],
+                        h=fake_obs[view]["rgb"].shape[0],
+                        return_pc_camera=True
+                    )
+                    *after_bbox, after_pcd_cam = self.get_image_bbox(
+                        w2c=w2c,
+                        points=rotated_fridge,
+                        K=K,
+                        dist_coef=dist_coef,
+                        w=fake_obs[view]["rgb"].shape[1],
+                        h=fake_obs[view]["rgb"].shape[0],
+                        return_pc_camera=True
+                    )
+                    
+                    after_bbox_mask = np.zeros(fake_obs[view]["rgb"].shape[:2], dtype=bool)
+                    after_bbox_mask[after_bbox[1] : after_bbox[3], after_bbox[0] : after_bbox[2]] = 1
+                    
+                    before_bbox_mask = np.zeros(fake_obs[view]["rgb"].shape[:2], dtype=bool)
+                    before_bbox_mask[before_bbox[1] : before_bbox[3], before_bbox[0] : before_bbox[2]] = 1
+                    
+                    contains_list = []
+                    constrained_list = []
+                    # for i, bbox in enumerate(obs_attr[view]["pred_boxes"]):
+                    # 
+                    #     before_valid = (
+                    #         bbox[0] >= before_bbox[0]
+                    #         and bbox[1] >= before_bbox[1]
+                    #         and bbox[2] <= before_bbox[2]
+                    #         and bbox[3] <= before_bbox[3]
+                    #     )
+                    #     after_valid = (
+                    #         bbox[0] >= after_bbox[0]
+                    #         and bbox[1] >= after_bbox[1]
+                    #         and bbox[2] <= after_bbox[2]
+                    #         and bbox[3] <= after_bbox[3]
+                    #     )
+                    #     if before_valid:
+                    #         contains_list.append(i)
+                    #     if after_valid:
+                    #         constrained_list.append(i)
+                    
+                    # mask = np.zeros_like(fake_obs[view]["rgb"])
+                    # mask[after_bbox[1] : after_bbox[3], after_bbox[0] : after_bbox[2]] = 1
+                    # from matplotlib import pyplot as plt
+                    # plt.imshow(mask[..., 0].astype(bool)); plt.show()
+                    # plt.imshow(fake_obs[view]["rgb"])
+                    # plt.show()
+                    
+                    # valid bboxes are the ones that fall in the bbox
+                    for i, mask in enumerate(obs_attr[view]["pred_masks"]):
+                        # before_valid = (
+                        #     bbox[0] >= before_bbox[0]
+                        #     and bbox[1] >= before_bbox[1]
+                        #     and bbox[2] <= before_bbox[2]
+                        #     and bbox[3] <= before_bbox[3]
+                        # )
+                        # after_valid = (
+                        #     bbox[0] >= after_bbox[0]
+                        #     and bbox[1] >= after_bbox[1]
+                        #     and bbox[2] <= after_bbox[2]
+                        #     and bbox[3] <= after_bbox[3]
+                        # )
+                        mean_obj_depth = fake_obs[view]["depths"][mask].mean()
+                        mean_before_depth = before_pcd_cam[..., 2].mean()
+                        
+                        # count fraction of mask contained in the bbox
+                        contained_mask = np.logical_and(mask, before_bbox_mask)
+                        frac_contained = contained_mask.sum() / mask.sum()
+                        
+                        before_valid = frac_contained > 0.9 and mean_obj_depth > mean_before_depth
+                        
+                        # after: check mask containment
+                        constrained_mask = np.logical_and(mask, after_bbox_mask)
+                        frac_constrained = constrained_mask.sum() / mask.sum()
+                        
+                        after_valid = frac_constrained > 0.9
+                        
+                        # obj_pcd = fake_obs[view]["position"][mask]
+                        # obj_pcd = obj_pcd[obj_pcd[:, 2] > 0]
+                        # obj_pcd = obj_pcd[obj_pcd[:, 2] < 4.5]
+                        # 
+                        # bbox_obj_3d = np.array([obj_pcd.min(axis=0), obj_pcd.max(axis=0)])
+                        # bbox_after_pcd_3d = np.array(
+                        #     [after_pcd_cam.min(axis=0), after_pcd_cam.max(axis=0)]
+                        # )
+                        # obj_vol = np.prod(np.maximum(0.0, bbox_obj_3d[1] - bbox_obj_3d[0]))
+                        # inersection_aabb(bbox_obj_3d, bbox_after_pcd_3d)
+                        # 
+                        # after_valid = iou > 0
+                        
+                        if before_valid:
+                            contains_list.append(i)
+                        if after_valid:
+                            constrained_list.append(i)
+
+        
+                    contains_pred_phrases = [
+                        p
+                        for i, p in enumerate(obs_attr[view]["pred_phrases"])
+                        if i in contains_list
+                    ]
+                    contains_obs_attr[view] = {
+                        "pred_boxes": obs_attr[view]["pred_boxes"][contains_list],
+                        "pred_masks": obs_attr[view]["pred_masks"][contains_list],
+                        "pred_phrases": contains_pred_phrases,
+                        "mask_feats": obs_attr[view]["mask_feats"][contains_list],
+                    }
+        
+                    constrained_pred_phrases = [
+                        obs_attr[view]["pred_phrases"][i] for i in constrained_list
+                    ]
+                    constrained_obs_attr[view] = {
+                        "pred_boxes": obs_attr[view]["pred_boxes"][constrained_list],
+                        "pred_masks": obs_attr[view]["pred_masks"][constrained_list],
+                        "pred_phrases": constrained_pred_phrases,
+                        "mask_feats": obs_attr[view]["mask_feats"][constrained_list],
+                    }
                 self.robo_memory.update_memory(
                     fake_obs,
                     contains_obs_attr,

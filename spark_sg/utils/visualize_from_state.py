@@ -152,15 +152,24 @@ app = Vuer(queries=dict(show_grid=False))
 
 @app.spawn(start=True)
 async def main(sess: VuerSession):
-    with open("/home/exx/Downloads/spark_states_v7/final_state.pkl", "rb") as f:
+    with open("/home/exx/Downloads/spark_states_v8/final_state.pkl", "rb") as f:
         state = pickle.load(f)
     with open("/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/debug_vol_fusion/full/identified_objects.pkl", "rb") as f:
         identified_objects = pickle.load(f)
     
+    # print out constrained and contained ids
+    for obj in state["constrained_dict"]:
+        obj_constrained = [x["instance_id"] for x in state["constrained_dict"][obj]] 
+        print(obj_constrained)
+        
+    for obj in state["contains_dict"]:
+        obj_constrained = [x["instance_id"] for x in state["contains_dict"][obj]] 
+        print(obj_constrained)
+    
     articulate_parts = load_articulate_parts(identified_objects)
     parts = load_vuer_parts(articulate_parts)
     
-    h_v, h_f, h_c = get_hierarchy(state, show_boxes=True)
+    h_v, h_f, h_c = get_hierarchy(state, show_boxes=False)
     pcd_points, pcd_colors = get_pcd(state)
     
     sess.set @ Scene(

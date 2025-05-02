@@ -7,7 +7,7 @@ import open3d as o3d
 import cv2
 from skimage import measure
 
-COUNT_TIME = False
+COUNT_TIME = True
 if COUNT_TIME:
     import time
 
@@ -110,6 +110,8 @@ class RoboMemory:
             extra_alignment=extra_alignment,
             visualize=visualize,
         )
+        [x["pred_phrases"] for x in observation_attributes.values()]
+        [x.instance_id for x in merged_instances]
         if COUNT_TIME:
             print(f"Memory: Merging the observations takes {time.time() - start}")
             start = time.time()
@@ -901,22 +903,22 @@ class RoboMemory:
 
         # Merge the table instances for the tabletop environment
         # Find all the table instances
-        table_instances = []
-        for instance in self.memory_instances:
-            if instance.label == "table":
-                table_instances.append(instance)
-
-        if len(table_instances) > 1:
-            if self.action_scene_graph is None:
-                main_table = table_instances[0]
-            else:
-                main_table = self.action_scene_graph.root.instance
-            # Merge the table instances
-            for instance in table_instances:
-                if instance != main_table:
-                    main_table.merge_instance(instance)
-                    self.memory_instances.remove(instance)
-                    instance.deleted = True
+        # table_instances = []
+        # for instance in self.memory_instances:
+        #     if instance.label == "table":
+        #         table_instances.append(instance)
+        # 
+        # if len(table_instances) > 1:
+        #     if self.action_scene_graph is None:
+        #         main_table = table_instances[0]
+        #     else:
+        #         main_table = self.action_scene_graph.root.instance
+        #     # Merge the table instances
+        #     for instance in table_instances:
+        #         if instance != main_table:
+        #             main_table.merge_instance(instance)
+        #             self.memory_instances.remove(instance)
+        #             instance.deleted = True
 
         if visualize:
             print("Visualizing the memory PC")

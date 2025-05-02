@@ -298,6 +298,34 @@ def iou_aabb(box1, box2):
 
     return inter_vol / (vol1 + vol2 - inter_vol)
 
+def inersection_aabb(box1, box2):
+    """
+    Intersection-over-Union for two axis-aligned 3-D bounding boxes.
+
+    Parameters
+    ----------
+    box1, box2 : array-like, shape (6,) or ((3,), (3,))
+        Either
+          • [xmin, ymin, zmin, xmax, ymax, zmax],  or
+          • ((xmin, ymin, zmin), (xmax, ymax, zmax))
+
+    Returns
+    -------
+    float
+        IoU ∈ [0, 1].
+    """
+    # unpack -> (min, max)  each of shape (3,)
+    b1_min, b1_max = (np.asarray(box1[:3]), np.asarray(box1[3:])) if len(box1) == 6 else map(np.asarray, box1)
+    b2_min, b2_max = (np.asarray(box2[:3]), np.asarray(box2[3:])) if len(box2) == 6 else map(np.asarray, box2)
+
+    # intersection box
+    inter_min = np.maximum(b1_min, b2_min)
+    inter_max = np.minimum(b1_max, b2_max)
+    inter_sizes = np.maximum(0.0, inter_max - inter_min)    # clamp negatives → 0
+    inter_vol = np.prod(inter_sizes)
+
+    return inter_vol
+
 def pick(d, *keys, strict=False):
     """Pick keys"""
     _d = {}

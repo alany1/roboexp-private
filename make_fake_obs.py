@@ -10,16 +10,26 @@ with open(f"{root}/keyframes.pkl", "rb") as f:
     keyframes = pickle.load(f)
     
 all_ts = []
-frames_per_obs = 10
+obs_per_kf = 10
+# for start, end in keyframes[:-1]:
+#     all_ts.append(list(range(start, end, frames_per_obs)))
 for start, end in keyframes[:-1]:
-    all_ts.append(list(range(start, end, frames_per_obs)))
+    # this is weird but guarauntess start and end frames are included
+    all_ts.append(list(range(start, end+1, int((end-start+1)/(obs_per_kf-1)))))
     
 all_ts.append([1550, 1555, 1560, 1565])
+
+# all_ts = all_ts[:5]
+print(all_ts)
 
 def make(ts):
     rgb = f"{root}/renders/rgb/{ts:04d}.jpg"
     rgb = Image.open(rgb)
     rgb = np.array(rgb) / 255
+    
+    semantics = f"{root}/renders/semantics_vis/semantic_{ts:04d}.vis.png"
+    semantics = Image.open(semantics)
+    semantics = np.array(semantics)
     
     import OpenEXR, Imath
     def load_exr_depth(path):
@@ -78,6 +88,7 @@ def make(ts):
         position=pts,
         rgb=rgb,
         depths=depth,
+        semantics=semantics,
         mask=mask,
         c2w=c2w,
         intrinsic=intrinsics,
@@ -85,10 +96,16 @@ def make(ts):
     )
     return fake_obs
 
-for i, ts_batch in enumerate(all_ts):
+
+from tqdm import tqdm
+import os
+
+save_dir = f"/home/exx/Downloads/semantics_test"
+os.makedirs(save_dir, exist_ok=True)
+for i, ts_batch in tqdm(enumerate(all_ts)):
     fake_obs = dict()
     for ts in ts_batch:
         fake_obs[f"fake_{ts}"] = make(ts)
     
-    with open(f"/home/exx/Downloads/even_denser/tmp_{i}.pkl", "wb") as f:
+    with open(f"{save_dir}/tmp_{i}.pkl", "wb") as f:
         pickle.dump(fake_obs, f)
