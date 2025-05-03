@@ -12,7 +12,7 @@ import pickle
 
 from collections import defaultdict
 
-from utils import sample_convex_hull_dense_volume, axis_aligned_bbox, iou_aabb, sample_bbox_dense_volume
+from utils import sample_convex_hull_dense_volume, iou_aabb, sample_bbox_dense_volume
 
 COUNT_TIME = True
 if COUNT_TIME:
@@ -241,12 +241,6 @@ class RoboAct:
                 self.previous_object_states[articulate_object["name"]] = event["art_params"]["translation"]
 
     
-            def get_cvx_hull(points):
-                pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
-                hull, _ = pcd.compute_convex_hull()
-                hull.remove_duplicated_vertices()
-                return hull
-            
             if discovery:
                 contains_obs_attr = dict()
                 constrained_obs_attr = dict()
@@ -285,46 +279,9 @@ class RoboAct:
                     
                     contains_list = []
                     constrained_list = []
-                    # for i, bbox in enumerate(obs_attr[view]["pred_boxes"]):
-                    # 
-                    #     before_valid = (
-                    #         bbox[0] >= before_bbox[0]
-                    #         and bbox[1] >= before_bbox[1]
-                    #         and bbox[2] <= before_bbox[2]
-                    #         and bbox[3] <= before_bbox[3]
-                    #     )
-                    #     after_valid = (
-                    #         bbox[0] >= after_bbox[0]
-                    #         and bbox[1] >= after_bbox[1]
-                    #         and bbox[2] <= after_bbox[2]
-                    #         and bbox[3] <= after_bbox[3]
-                    #     )
-                    #     if before_valid:
-                    #         contains_list.append(i)
-                    #     if after_valid:
-                    #         constrained_list.append(i)
-                    
-                    # mask = np.zeros_like(fake_obs[view]["rgb"])
-                    # mask[after_bbox[1] : after_bbox[3], after_bbox[0] : after_bbox[2]] = 1
-                    # from matplotlib import pyplot as plt
-                    # plt.imshow(mask[..., 0].astype(bool)); plt.show()
-                    # plt.imshow(fake_obs[view]["rgb"])
-                    # plt.show()
                     
                     # valid bboxes are the ones that fall in the bbox
                     for i, mask in enumerate(obs_attr[view]["pred_masks"]):
-                        # before_valid = (
-                        #     bbox[0] >= before_bbox[0]
-                        #     and bbox[1] >= before_bbox[1]
-                        #     and bbox[2] <= before_bbox[2]
-                        #     and bbox[3] <= before_bbox[3]
-                        # )
-                        # after_valid = (
-                        #     bbox[0] >= after_bbox[0]
-                        #     and bbox[1] >= after_bbox[1]
-                        #     and bbox[2] <= after_bbox[2]
-                        #     and bbox[3] <= after_bbox[3]
-                        # )
                         mean_obj_depth = fake_obs[view]["depths"][mask].mean()
                         mean_before_depth = before_pcd_cam[..., 2].mean()
                         
@@ -339,19 +296,6 @@ class RoboAct:
                         frac_constrained = constrained_mask.sum() / mask.sum()
                         
                         after_valid = frac_constrained > 0.9
-                        
-                        # obj_pcd = fake_obs[view]["position"][mask]
-                        # obj_pcd = obj_pcd[obj_pcd[:, 2] > 0]
-                        # obj_pcd = obj_pcd[obj_pcd[:, 2] < 4.5]
-                        # 
-                        # bbox_obj_3d = np.array([obj_pcd.min(axis=0), obj_pcd.max(axis=0)])
-                        # bbox_after_pcd_3d = np.array(
-                        #     [after_pcd_cam.min(axis=0), after_pcd_cam.max(axis=0)]
-                        # )
-                        # obj_vol = np.prod(np.maximum(0.0, bbox_obj_3d[1] - bbox_obj_3d[0]))
-                        # inersection_aabb(bbox_obj_3d, bbox_after_pcd_3d)
-                        # 
-                        # after_valid = iou > 0
                         
                         if before_valid:
                             contains_list.append(i)
@@ -420,17 +364,6 @@ class RoboAct:
                 return contains_instances, constrained_instances
             
             else:
-                # import open3d as o3d
-                # # visualize the pcd
-                # pcd = o3d.geometry.PointCloud()
-                # pcd.points = o3d.utility.Vector3dVector(prune_pcd)
-                # o3d.io.write_point_cloud("/home/exx/Downloads/prune.ply", pcd)
-                # 
-                # scene_pcd = o3d.geometry.PointCloud()
-                # scene_pcd.points = o3d.utility.Vector3dVector(self.robo_memory.index_to_pcd(list(self.robo_memory.memory_scene.keys())))
-                # o3d.io.write_point_cloud("/home/exx/Downloads/scene.ply", scene_pcd)
-
-                
                 self.robo_memory.update_memory(
                     fake_obs,
                     obs_attr,
@@ -439,7 +372,60 @@ class RoboAct:
                     visualize=False,
                     prune_pcd=prune_pcd,
                 )
-            
+
+    def no_art_get_observations_update_memory(
+        self,
+        fake_obs,
+        articulate_object=None,
+        event=None,
+        discovery=True,
+        densify_to=0.01,
+    ):
+        obs_attr = self.robo_percept.get_attributes_from_observations(
+            fake_obs, visualize=False
+        )
+        if articulate_object is None or not discovery:
+            self.robo_memory.update_memory(
+                fake_obs,
+                obs_attr,
+                self.object_level_labels,
+                filter_masks=dict(fake=None),
+                visualize=False,
+            )
+        else:
+            contains_obs_attr = dict()
+
+            for view in fake_obs:
+                contains_list = []
+
+                # valid bboxes are the ones that fall in the bbox
+                for i, mask in enumerate(obs_attr[view]["pred_masks"]):
+                    contains_list.append(i)
+
+                contains_pred_phrases = [
+                    p
+                    for i, p in enumerate(obs_attr[view]["pred_phrases"])
+                    if i in contains_list
+                ]
+                contains_obs_attr[view] = {
+                    "pred_boxes": obs_attr[view]["pred_boxes"][contains_list],
+                    "pred_masks": obs_attr[view]["pred_masks"][contains_list],
+                    "pred_phrases": contains_pred_phrases,
+                    "mask_feats": obs_attr[view]["mask_feats"][contains_list],
+                }
+
+            self.robo_memory.update_memory(
+                fake_obs,
+                contains_obs_attr,
+                self.object_level_labels,
+                filter_masks=dict(fake=None),
+                visualize=False,
+            )
+
+            contains_instances = copy.deepcopy(self.robo_memory.memory_instances)
+
+            return contains_instances
+
             
     def get_observations_update_memory(
         self,
