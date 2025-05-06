@@ -2,6 +2,182 @@ from scipy.ndimage import binary_dilation
 import numpy as np
 import torch
 import math
+import numpy as np
+from scipy.spatial import ConvexHull
+from skimage.draw import polygon   # pip install scikit-image
+
+import numpy as np
+import numpy as np
+import numpy as np
+import numpy as np
+from scipy.optimize import least_squares
+def apply_depth_hyperbola(est_depth: np.ndarray,
+                          S: float,
+                          c: float,
+                          out: np.ndarray | None = None):
+    """
+    Convert a normalised depth image E to metric depth D̂ using
+
+        D̂  =  S / (E + c)
+
+    Parameters
+    ----------
+    est_depth : (H,W) float32/float64 array   – normalised depth E
+    S, c      : scalars returned by `fit_depth_hyperbola`
+    out       : optional pre-allocated array for the result
+
+    Returns
+    -------
+    metric_depth : (H,W) float64 array  – estimated metric depth
+    """
+    if out is None:
+        out = np.empty_like(est_depth, dtype=np.float64)
+    else:
+        if out.shape != est_depth.shape:
+            raise ValueError("`out` must have the same shape as est_depth")
+        out = out.astype(np.float64, copy=False)
+
+    # The +1e-12 prevents accidental division by zero at E ≈ −c
+    np.divide(S, est_depth + c + 1e-12, out=out, where=np.isfinite(est_depth))
+
+    # optional: mark invalid pixels (where E was inf/NaN) as NaN in the output
+    out[~np.isfinite(est_depth)] = np.nan
+    return out
+def fit_depth_hyperbola(
+    metric_depth,
+    est_depth,
+    mask=None,
+    depth_min=0.0,
+    depth_max=np.inf,
+    train_split=0.8,
+    n_samples=200_000,   # subsample cap (keeps it fast)
+    init_S=None, init_c=None,
+    robust_loss="soft_l1",
+    f_scale=1.0,
+    random_state=0,
+):
+    """
+    Robustly fit   D ≈ S / (E + c)   using scipy.least_squares.
+
+    Returns
+    -------
+    S, c              : floats
+    val_mae, val_rel  : validation error on the held-out set
+    """
+
+    rng = np.random.default_rng(random_state)
+
+    D = metric_depth.astype(np.float64)
+    E = est_depth.astype(np.float64)
+
+    if mask is None:
+        mask = (np.isfinite(D) & np.isfinite(E) &
+                (D > depth_min) & (D < depth_max))
+    else:
+        mask = mask & np.isfinite(D) & np.isfinite(E) & \
+                (D > depth_min) & (D < depth_max)
+
+    if mask.sum() < 1000:
+        raise ValueError("Too few valid pixels after masking")
+
+    # ------------------------------------------------------------------ #
+    # 1)  random subsample to keep LM fast                               #
+    # ------------------------------------------------------------------ #
+    idxs = np.column_stack(np.nonzero(mask))
+    if idxs.shape[0] > n_samples:
+        idxs = idxs[rng.choice(idxs.shape[0], n_samples, replace=False)]
+
+    # shuffle & split
+    rng.shuffle(idxs)
+    split = int(idxs.shape[0] * train_split)
+    train, val = idxs[:split], idxs[split:]
+
+    E_train = E[train[:, 0], train[:, 1]]
+    D_train = D[train[:, 0], train[:, 1]]
+    E_val   = E[val[:, 0], val[:, 1]]
+    D_val   = D[val[:, 0], val[:, 1]]
+
+    # ------------------------------------------------------------------ #
+    # 2)  least-squares with robust loss                                 #
+    # ------------------------------------------------------------------ #
+    def depth_model(p, x):        # p = [S, c]
+        return p[0] / (x + p[1])
+
+    def residuals(p, x, y):
+        return depth_model(p, x) - y
+
+    # initial guess ---------------------------------------------------- #
+    if init_S is None or init_c is None:
+        # crude but safe: pick two quantiles and solve S & c analytically
+        q10, q90 = np.quantile(E_train, [0.1, 0.9])
+        D_q10 = np.median(D_train[(E_train >= q10*0.95) & (E_train <= q10*1.05)])
+        D_q90 = np.median(D_train[(E_train >= q90*0.95) & (E_train <= q90*1.05)])
+        # Solve S/(q10+c)=D_q10  and  S/(q90+c)=D_q90
+        c_init = (q10*D_q10 - q90*D_q90) / (D_q90 - D_q10 + 1e-12)
+        S_init = D_q10 * (q10 + c_init)
+        if not np.isfinite(S_init) or S_init <= 0:
+            S_init, c_init = 1.0, 0.1
+    else:
+        S_init, c_init = init_S, init_c
+
+    res = least_squares(
+        fun=residuals,
+        x0=[S_init, c_init],
+        args=(E_train, D_train),
+        loss=robust_loss,
+        f_scale=f_scale,
+        bounds=([1e-6, -0.99], [np.inf, 10.0])  # keep denominator positive
+    )
+
+    S, c = res.x
+
+    # ------------------------------------------------------------------ #
+    # 3)  validation error                                               #
+    # ------------------------------------------------------------------ #
+    D_hat_val = depth_model(res.x, E_val)
+    val_mae   = np.abs(D_hat_val - D_val).mean()
+    val_rel   = (np.abs(D_hat_val - D_val) / D_val).mean()
+
+    print("Robust hyperbola fit:")
+    print(f"  S = {S:.6f} ,  c = {c:.6f}")
+    print(f"  validation  MAE = {val_mae*1e2:.2f} cm   REL = {val_rel*1e2:.2f}%")
+
+    return float(S), float(c), float(val_mae), float(val_rel)
+
+
+
+def convex_hull_mask(mask: np.ndarray) -> np.ndarray:
+    """
+    Parameters
+    ----------
+    mask : (H,W) np.ndarray of bool / {0,1}
+        Input binary mask whose foreground pixels define the point set.
+
+    Returns
+    -------
+    filled : (H,W) np.ndarray of bool
+        Binary mask where the entire convex hull of the input foreground is 1/True.
+        If the input mask is empty, returns an all-False array.
+    """
+    # 1) coordinates of foreground pixels ---------------------------------
+    ys, xs = np.nonzero(mask)          # row = y, col = x
+    if len(xs) == 0:                   # empty mask → nothing to do
+        return np.zeros_like(mask, dtype=bool)
+
+    pts = np.column_stack([xs, ys])    # (N,2) with (x,y) pairs
+
+    # 2) convex hull in image coords --------------------------------------
+    hull = ConvexHull(pts)
+    hull_pts = pts[hull.vertices]      # ordered vertices of the hull
+
+    # 3) rasterise / fill the polygon -------------------------------------
+    rr, cc = polygon(hull_pts[:, 1],   # rows (y)
+                     hull_pts[:, 0],   # columns (x)
+                     shape=mask.shape)
+
+    filled = np.zeros_like(mask, dtype=bool)
+    filled[rr, cc] = True
+    return filled
 
 def backproject_points_cam(*, depth, pose, fx, fy, cx, cy, depth_range=(0.1, 5.0), seg=None, device="cuda", aria_rot=True):
     """

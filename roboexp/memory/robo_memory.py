@@ -110,8 +110,6 @@ class RoboMemory:
             extra_alignment=extra_alignment,
             visualize=visualize,
         )
-        [x["pred_phrases"] for x in observation_attributes.values()]
-        [x.instance_id for x in merged_instances]
         if COUNT_TIME:
             print(f"Memory: Merging the observations takes {time.time() - start}")
             start = time.time()
@@ -760,9 +758,7 @@ class RoboMemory:
         merged_scene = {}
         _merged_scene_avg = {}
         for name, obs in observations.items():
-            if "wrist" in name and "wrist" in filter_masks:
-                filter_mask = filter_masks["wrist"]
-            elif name in filter_masks:
+            if filter_masks is not None and name in filter_masks:
                 filter_mask = filter_masks[name]
             else:
                 filter_mask = None
@@ -927,6 +923,19 @@ class RoboMemory:
                 np.array(list(self.memory_scene.values())),
                 instances=self.memory_instances,
             )
+    
+    def get_current_color_pcd(self):
+        # Get the current color pcd
+        if len(self.memory_scene) == 0:
+            return None
+        memory_pcd = o3d.geometry.PointCloud()
+        memory_pcd.points = o3d.utility.Vector3dVector(
+            self.index_to_pcd(np.array(list(self.memory_scene.keys())))
+        )
+        memory_pcd.colors = o3d.utility.Vector3dVector(
+            np.array(list(self.memory_scene.values()))
+        )
+        return memory_pcd
 
     def _align_observations(self, observations):
         # Align the observations to the first camera if there are multiple viewpoint

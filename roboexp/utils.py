@@ -210,8 +210,10 @@ def visualize_pc(
 ):
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(pc)
+    
     if color is not None:
         pcd.colors = o3d.utility.Vector3dVector(color)
+    return pcd
     display = [pcd]
     if extra is not None:
         display += extra

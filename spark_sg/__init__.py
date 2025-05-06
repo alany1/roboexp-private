@@ -20,7 +20,7 @@ def load_colors_by_rgb(
 
     return palette
 
-USE_SEMANTICS = True
+USE_SEMANTICS = False
 
 # _colors2name = load_colors_by_rgb("/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/renders/semantics_vis/colors.csv")
 # COLOR_INSTANCE_MAPPING = {}

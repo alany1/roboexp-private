@@ -12,7 +12,12 @@ import pickle
 
 from collections import defaultdict
 
-from utils import sample_convex_hull_dense_volume, iou_aabb, sample_bbox_dense_volume
+from utils import (
+    sample_convex_hull_dense_volume,
+    iou_aabb,
+    sample_bbox_dense_volume,
+    convex_hull_mask,
+)
 
 COUNT_TIME = True
 if COUNT_TIME:
@@ -91,6 +96,9 @@ class RoboAct:
         self.previous_object_states = defaultdict(lambda: 0)
         
     def get_image_bbox(self, *, w2c, points, K, dist_coef, w, h, return_pc_camera=False):
+        """
+        if return_mask=True, then returns the mask on top of the bbox 
+        """
         # Project the points to the image plane
         pc_camera = points @ w2c[:3, :3].T + w2c[:3, 3]
         mask = pc_camera[:, 2] > 0
@@ -114,10 +122,14 @@ class RoboAct:
         xmin, xmax = u.min(), u.max()
         ymin, ymax = v.min(), v.max()
 
+        
         if return_pc_camera:
             pc_camera = pc_camera[mask]
             pc_camera = pc_camera[idx]
-            return xmin, ymin, xmax, ymax, pc_camera
+            obj_depth = np.zeros((h, w), dtype=float)
+            obj_depth[v, u] = pc_camera[..., 2] # [mask][idx]
+            return xmin, ymin, xmax, ymax, pc_camera, obj_depth
+        
         return xmin, ymin, xmax, ymax
     
     def get_instance(self, instance_id):
@@ -169,7 +181,6 @@ class RoboAct:
                     
                     # remove from memory, since it now belongs to the object.
                     self.robo_memory.remove_instance(r)
-        [x.instance_id for x in self.robo_memory.memory_instances]
         for k in constrained_dict:
             frozen_instances = copy.deepcopy(constrained_dict[k])
             for instance in frozen_instances:
@@ -190,16 +201,24 @@ class RoboAct:
         event=None,
         discovery=True,
         densify_to=0.01,
+        visualize=False,
     ):
         obs_attr = self.robo_percept.get_attributes_from_observations(
-            fake_obs, visualize=False
+            fake_obs, visualize=visualize,
         )
+        
+        # grab filter masks from fake_obs
+        filter_masks = dict()
+        for view in fake_obs:
+            filter_masks[view] = fake_obs[view].get("filter_mask", None)
+            print(filter_masks[view].sum())
+        
         if articulate_object is None:
             self.robo_memory.update_memory(
                 fake_obs,
                 obs_attr,
                 self.object_level_labels,
-                filter_masks=dict(fake=None),
+                filter_masks=filter_masks,
                 visualize=False,
             )
         else:
@@ -246,13 +265,35 @@ class RoboAct:
                 constrained_obs_attr = dict()
                 
                 for view in fake_obs:
+                    
+                    if obs_attr[view]["pred_masks"] is None:
+                        contains_obs_attr[view] = {
+                            "pred_boxes": np.empty((0, 4), dtype=np.float32),
+                            "pred_masks": np.empty((0, fake_obs[view]["rgb"].shape[0], fake_obs[view]["rgb"].shape[1]), dtype=bool),
+                            "pred_phrases": [],
+                            "mask_feats": np.empty((0, 1024), dtype=np.float16),
+                        }
+                        constrained_obs_attr[view] = {
+                            "pred_boxes": np.empty((0, 4), dtype=np.float32),
+                            "pred_masks": np.empty(
+                                (
+                                    0,
+                                    fake_obs[view]["rgb"].shape[0],
+                                    fake_obs[view]["rgb"].shape[1],
+                                ),
+                                dtype=bool,
+                            ),
+                            "pred_phrases": [],
+                            "mask_feats": np.empty((0, 1024), dtype=np.float16),
+                        }
+                        continue
+                    
                     c2w = fake_obs[view]["c2w"]
                     w2c = np.linalg.inv(c2w)
                     
                     K = fake_obs[view]["intrinsic"]
                     dist_coef = fake_obs[view]["dist_coef"]
-        
-                    *before_bbox, before_pcd_cam = self.get_image_bbox(
+                    *before_bbox, before_pcd_cam, before_obj_depth = self.get_image_bbox(
                         w2c=w2c,
                         points=fridge,
                         K=K,
@@ -261,7 +302,7 @@ class RoboAct:
                         h=fake_obs[view]["rgb"].shape[0],
                         return_pc_camera=True
                     )
-                    *after_bbox, after_pcd_cam = self.get_image_bbox(
+                    *after_bbox, after_pcd_cam, after_obj_depth = self.get_image_bbox(
                         w2c=w2c,
                         points=rotated_fridge,
                         K=K,
@@ -282,17 +323,20 @@ class RoboAct:
                     
                     # valid bboxes are the ones that fall in the bbox
                     for i, mask in enumerate(obs_attr[view]["pred_masks"]):
-                        mean_obj_depth = fake_obs[view]["depths"][mask].mean()
-                        mean_before_depth = before_pcd_cam[..., 2].mean()
+                        before_obj_depth_mask = before_obj_depth > 0
+                        depth_check_mask = np.logical_and(mask, before_obj_depth_mask)
+                        mean_obj_depth = fake_obs[view]["depths"][depth_check_mask].mean()
+                        mean_before_depth = before_obj_depth[depth_check_mask].mean()
                         
                         # count fraction of mask contained in the bbox
-                        contained_mask = np.logical_and(mask, before_bbox_mask)
+                        # contained_mask = np.logical_and(mask, before_bbox_mask)
+                        contained_mask = np.logical_and(mask, convex_hull_mask(before_obj_depth>0))
                         frac_contained = contained_mask.sum() / mask.sum()
-                        
                         before_valid = frac_contained > 0.9 and mean_obj_depth > mean_before_depth
                         
                         # after: check mask containment
-                        constrained_mask = np.logical_and(mask, after_bbox_mask)
+                        # constrained_mask = np.logical_and(mask, after_bbox_mask)
+                        constrained_mask = np.logical_and(mask, convex_hull_mask(after_obj_depth>0))
                         frac_constrained = constrained_mask.sum() / mask.sum()
                         
                         after_valid = frac_constrained > 0.9
@@ -328,18 +372,18 @@ class RoboAct:
                     fake_obs,
                     contains_obs_attr,
                     self.object_level_labels,
-                    filter_masks=dict(fake=None),
+                    filter_masks=filter_masks,
                     visualize=False,
                     prune_pcd=prune_pcd,
                 )
-                
+
                 contains_instances = copy.deepcopy(self.robo_memory.memory_instances)
                 
                 self.robo_memory.update_memory(
                     fake_obs,
                     constrained_obs_attr,
                     self.object_level_labels,
-                    filter_masks=dict(fake=None),
+                    filter_masks=filter_masks,
                     visualize=False,
                     prune_pcd=prune_pcd,
                 )
@@ -364,11 +408,23 @@ class RoboAct:
                 return contains_instances, constrained_instances
             
             else:
+                o3d.io.write_point_cloud("/home/exx/Downloads/tmp.ply", self.robo_memory.get_current_color_pcd())
+                pc = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(prune_pcd))
+                
+                o3d.io.write_point_cloud(
+                    "/home/exx/Downloads/tmp.ply",
+                    self.robo_memory.get_current_color_pcd(),
+                )
+                o3d.io.write_point_cloud(
+                    "/home/exx/Downloads/tmp_2.ply",
+                    pc,
+                )
+                
                 self.robo_memory.update_memory(
                     fake_obs,
                     obs_attr,
                     self.object_level_labels,
-                    filter_masks=dict(fake=None),
+                    filter_masks=filter_masks,
                     visualize=False,
                     prune_pcd=prune_pcd,
                 )

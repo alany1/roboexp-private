@@ -67,6 +67,16 @@ class RoboPercept:
                 pred_boxes, pred_phrases, pred_masks = self.get_grounding_masks(
                     img, only_max=True
                 )
+                
+                if pred_boxes is None:
+                    observation_attributes[name] = {
+                        "pred_boxes": None,
+                        "pred_phrases": None,
+                        "pred_masks": None,
+                        "mask_feats": None,
+                    }
+                    continue
+                    
                 mask_feats = self.get_dense_clip(
                     img, pred_boxes, pred_masks, pred_phrases, per_mask=True
                 )

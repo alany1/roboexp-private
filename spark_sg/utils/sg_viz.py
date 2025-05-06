@@ -73,9 +73,10 @@ def cylinder_between(p0: np.ndarray,
 def hierarchy_to_mesh(
     hierarchy: Dict,
     *,
-    show_boxes: bool = True,      # ← NEW FLAG
-    gap_z: float = 1.0,           # obj-node height above highest box top
-    parent_gap_z: float = 0.6,    # parent layer height above obj layer
+    show_boxes: bool = True,            # ← draw boxes?
+    restrict_relations: bool = False,   # ← keep only related objects?
+    gap_z: float = 1.0,
+    parent_gap_z: float = 0.6,
     node_radius: float = 0.06,
     parent_radius: float = 0.08,
     line_radius: float = 0.015,
@@ -83,46 +84,57 @@ def hierarchy_to_mesh(
     force_node_z: float | None = None,
 ) -> o3d.geometry.TriangleMesh:
     """
-    Visualises a 3-layer scene graph.
+    Visualise a 3-layer scene graph.
 
     Parameters
     ----------
-    show_boxes : draw axis-aligned box meshes if True; otherwise omit them
-                 (edges still drop to each box centre so structure is intact)
-    Other parameters unchanged …
+    show_boxes        : draw axis-aligned box meshes if True
+    restrict_relations: if True, keep only object nodes that appear as a
+                        *child* in either 'contains' or 'constrained'
+                        (and their boxes if `show_boxes` is True)
     """
-    ids: list[str] = hierarchy["all_instance_ids"]
-    id2box: Dict[str, Dict] = hierarchy["instance_id_to_bbox"]
 
-    contains_map    = hierarchy.get("contains", {})
-    constrained_map = hierarchy.get("constrained", {})
+    # ------------------------------------------------------------------
+    # 0.  unpack
+    # ------------------------------------------------------------------
+    ids: list[str]          = hierarchy["all_instance_ids"]
+    id2box: Dict[str, Dict] = hierarchy["instance_id_to_bbox"]
+    contains_map            = hierarchy.get("contains", {})
+    constrained_map         = hierarchy.get("constrained", {})
+
+    # children that participate in relations
+    related_ids = {cid
+                   for rel in (contains_map, constrained_map)
+                   for cids in rel.values()
+                   for cid in cids}
+
+    # filter objects if requested
+    obj_ids = [i for i in ids] if not restrict_relations else [
+        i for i in ids if i in related_ids
+    ]
 
     merged = o3d.geometry.TriangleMesh()
 
-    # --------------------------- layer-0  (boxes) ----------------------
+    # ------------------------------------------------------------------
+    # 1.  layer-0  (boxes)
+    # ------------------------------------------------------------------
     top_z = -np.inf
-    for _k, box in id2box.items():
-        centre = np.asarray(box["center"], float).reshape(3)
-        size   = np.asarray(box["size"],   float).reshape(3)
-        if np.any(size <= 0):
-            # make it a bit bigger
-            size = np.maximum(size, 0.1)
+    drawn_boxes: set[str] = set()
 
-        if show_boxes:
- #            if _k in [
- #  'oven_12_instance',
- # 'oven_18_instance',
- # 'oven_19_instance',
- # 'oven_24_instance',
- # 'oven_6_instance',
- #                      ]:
-                print(_k)
-                m = o3d.geometry.TriangleMesh.create_box(*size)
-                m.translate(centre - size / 2)
-                m.paint_uniform_color(np.random.rand(3))
-                merged += m
+    if show_boxes:
+        for inst_id in obj_ids:
+            if inst_id not in id2box:
+                continue
+            centre = np.asarray(id2box[inst_id]["center"], float)
+            size   = np.asarray(id2box[inst_id]["size"],   float)
+            size   = np.maximum(size, 0.1)                       # avoid degenerate
 
-        top_z = max(top_z, centre[2] + size[2] / 2)
+            m = o3d.geometry.TriangleMesh.create_box(*size)
+            m.translate(centre - size / 2)
+            m.paint_uniform_color(np.random.rand(3))
+            merged += m
+            drawn_boxes.add(inst_id)
+            top_z = max(top_z, centre[2] + size[2] / 2)
 
     if top_z == -np.inf:          # no boxes at all
         top_z = 0.0
@@ -130,13 +142,13 @@ def hierarchy_to_mesh(
     node_z   = force_node_z if force_node_z is not None else (top_z + gap_z)
     parent_z = node_z + parent_gap_z
 
-    # extents (for orphan layout)
+    # ------------------------------------------------------------------
+    # 2.  bounds for orphan layout
+    # ------------------------------------------------------------------
     if id2box:
-        all_centres = np.vstack([b["center"] for b in id2box.values()])
-        span_x = all_centres[:, 0].ptp()
-        span_y = all_centres[:, 1].ptp()
-        min_x  = all_centres[:, 0].min()
-        max_y  = all_centres[:, 1].max()
+        all_c = np.vstack([b["center"] for b in id2box.values()])
+        span_x, span_y = all_c[:, 0].ptp(), all_c[:, 1].ptp()
+        min_x, max_y   = all_c[:, 0].min(), all_c[:, 1].max()
     else:
         span_x = span_y = 0.0
         min_x  = max_y = 0.0
@@ -145,16 +157,18 @@ def hierarchy_to_mesh(
     orphan_row = max_y + max(span_y, 1.0) * 0.2
     orphan_col = 0
 
-    # --------------------------- layer-1  (object nodes) --------------
+    # ------------------------------------------------------------------
+    # 3.  layer-1  (object nodes)
+    # ------------------------------------------------------------------
     node_pos: Dict[str, np.ndarray] = {}
 
-    for inst_id in ids:
+    for inst_id in obj_ids:
         has_box = inst_id in id2box
+        centre  = np.asarray(id2box[inst_id]["center"], float) if has_box else None
 
         if has_box:
-            centre = np.asarray(id2box[inst_id]["center"], float)
             pos = np.array([centre[0], centre[1], node_z])
-        else:
+        else:                                  # orphan object, still allowed
             pos = np.array([min_x + orphan_col * orphan_dx,
                             orphan_row,
                             node_z])
@@ -172,7 +186,9 @@ def hierarchy_to_mesh(
             line.paint_uniform_color([0.2, 0.2, 0.2])
             merged += line
 
-    # --------------------------- layer-2  (parent nodes) --------------
+    # ------------------------------------------------------------------
+    # 4.  layer-2  (parent nodes)  + edges
+    # ------------------------------------------------------------------
     parent_nodes = set(contains_map) | set(constrained_map)
     parent_orphan_col = 0
 
@@ -181,9 +197,9 @@ def hierarchy_to_mesh(
                        for c in rel.get(parent, []) if c in node_pos]
 
         if children_xy:
-            centre_xy = np.mean(children_xy, axis=0)
-            pos = np.array([centre_xy[0], centre_xy[1], parent_z])
-        else:
+            xy = np.mean(children_xy, axis=0)
+            pos = np.array([xy[0], xy[1], parent_z])
+        else:                                   # parent with unseen children
             pos = np.array([min_x + parent_orphan_col * orphan_dx,
                             orphan_row + orphan_dx,
                             parent_z])
@@ -193,52 +209,46 @@ def hierarchy_to_mesh(
 
         sphere = o3d.geometry.TriangleMesh.create_sphere(parent_radius, 20)
         sphere.translate(pos)
-        sphere.paint_uniform_color([1.0, 0.2, 0.2])      # red parent
+        sphere.paint_uniform_color([1.0, 0.2, 0.2])    # red parent
         merged += sphere
 
-    # --------------------------- edges parent → child -----------------
     def add_edges(rel_map: Dict[str, List[str]], colour):
         nonlocal merged
         for parent, child_ids in rel_map.items():
-            p_pos = node_pos.get(parent)
-            if p_pos is None:
+            p = node_pos.get(parent)
+            if p is None:
                 continue
             for cid in child_ids:
-                c_pos = node_pos.get(cid)
-                if c_pos is None:
+                c = node_pos.get(cid)
+                if c is None:
                     continue
-                e = cylinder_between(p_pos, c_pos, edge_radius)
+                e = cylinder_between(p, c, edge_radius)
                 e.paint_uniform_color(colour)
                 merged += e
 
-    add_edges(contains_map,    [1.0, 0.6, 0.0])   # orange
-    add_edges(constrained_map, [0.0, 0.4, 1.0])  # blue
+    add_edges(contains_map,    [1.0, 0.6, 0.0])   # orange  = contains
+    add_edges(constrained_map, [0.0, 0.4, 1.0])   # blue    = constrained
 
-    points = hierarchy.get("points", None)
-    colors = hierarchy.get("colors", None)
-    if points is not None:
-        if len(points):
-            print(len(points))
-            # Convert point cloud to a "vertex-only" TriangleMesh so
-            # it can live in the same geometry object as everything else.
-            mesh_pcd = o3d.geometry.TriangleMesh()
-            mesh_pcd.vertices = o3d.utility.Vector3dVector(np.asarray(points))
-            # mesh_pcd.triangles = o3d.utility.Vector3iVector(
-            #     np.repeat(np.arange(len(points))[:, None], 3, axis=1)
-            # )  # (i,i,i)
-            if colors is not None and len(colors) == len(points):
-                mesh_pcd.vertex_colors = o3d.utility.Vector3dVector(
-                    np.asarray(colors)
-                )
-            else:
-                # default grey if no colour info
-                mesh_pcd.vertex_colors = o3d.utility.Vector3dVector(
-                    np.full((len(points), 3), 0.5)
-                )
-            merged += mesh_pcd
+    # ------------------------------------------------------------------
+    # 5.  reference point cloud (unchanged)
+    # ------------------------------------------------------------------
+    pts, cols = hierarchy.get("points"), hierarchy.get("colors")
+    if pts is not None and len(pts):
+        mesh_pcd = o3d.geometry.TriangleMesh()
+        mesh_pcd.vertices  = o3d.utility.Vector3dVector(np.asarray(pts))
+        mesh_pcd.triangles = o3d.utility.Vector3iVector(          # keep every vertex
+            np.repeat(np.arange(len(pts))[:, None], 3, axis=1)
+        )
+        if cols is not None and len(cols) == len(pts):
+            mesh_pcd.vertex_colors = o3d.utility.Vector3dVector(np.asarray(cols))
+        else:
+            mesh_pcd.vertex_colors = o3d.utility.Vector3dVector(
+                np.full((len(pts), 3), 0.5))
+        merged += mesh_pcd
 
     merged.compute_vertex_normals()
     return merged
+
 
 def save_hierarchy_as_ply(hierarchy: Dict,
                           out_file: str | Path,
