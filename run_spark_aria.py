@@ -30,23 +30,28 @@ def run():
     object_level_labels = [
         "cup",
         "fruit",
-        "vegetable",
+        # "vegetable",
         "bowl",
         "bottle",
-        "coffeemaker",
-        "mug",
-        "dishwasher",
-        "door",
-        "fork",
-        "knife",
-        "microwave",
-        "oven",
-        "plate",
-        "spatula",
-        "window",
+        # "coffeemaker",
+        # "mug",
+        # "dishwasher",
+        # "door",
+        # "fork",
+        # "knife",
+        # "microwave",
+        # "oven",
+        # "plate",
+        # "spatula",
+        "pillow",
         "stool",
+        "monitor",
+        "scissors",
+        "keyboard",
+        "handle",
     ]
-    part_level_labels = ["handle"]
+    # part_level_labels = ["handle"]
+    part_level_labels = []
     grounding_dict = (
         " . ".join(object_level_labels) + " . " + " . ".join(part_level_labels)
     )
@@ -61,16 +66,24 @@ def run():
     )
     
     
+    # vol_fusion_root = "/home/exx/datasets/aria/real/kitchen_v2/vol_fusion_v3_hand_detector_combination"
+    # aria_obs_dir = "/home/exx/Downloads/aria_obs_est"
+    
+    vol_fusion_root = "/home/exx/datasets/aria/real/spot_room_v1/vol_fusion_v1"
+    aria_obs_dir = "/home/exx/Downloads/spot_room_v1_obs/"
+    
     with open(
-        "/home/exx/datasets/aria/real/kitchen_v2/vol_fusion_v3_hand_detector_combination/identified_objects.pkl",
+        f"{vol_fusion_root}/identified_objects.pkl",
         "rb",
     ) as f:
         objects_list = pickle.load(f)
     with open(
-        "/home/exx/datasets/aria/real/kitchen_v2/vol_fusion_v3_hand_detector_combination/events.pkl",
+        f"{vol_fusion_root}/events.pkl",
         "rb",
     ) as f:
         events = pickle.load(f)
+    with open(f"{vol_fusion_root}/keyframes.pkl", "rb") as f:
+        keyframes = pickle.load(f)
     
     def compare(*, old_instances, robo_memory):
         old_instance_ids = [instance.instance_id for instance in old_instances]
@@ -82,7 +95,7 @@ def run():
             
         return new_instances
     
-    ts_batches = [f"/home/exx/Downloads/aria_obs_est/tmp_{i}.pkl" for i in range(7)]
+    ts_batches = [f"{aria_obs_dir}/tmp_{i}.pkl" for i in range(7)]
     fake_obs_batches = []
     for ts_batch in ts_batches:
         with open(ts_batch, "rb") as f:
@@ -90,27 +103,43 @@ def run():
             fake_obs_batches.append(fake_obs)
             print(f"{len(fake_obs)} observations loaded from {ts_batch}")
     
-    kwargs_batches = [
-        {},
-        dict(
-            articulate_object=objects_list["object_0"], event=events[0], discovery=True
-        ),
-        dict(
-            articulate_object=objects_list["object_0"], event=events[1], discovery=False
-        ),
-        dict(
-            articulate_object=objects_list["object_2"], event=events[2], discovery=True
-        ),
-        dict(
-            articulate_object=objects_list["object_2"], event=events[3], discovery=False
-        ),
-        dict(
-            articulate_object=objects_list["object_4"], event=events[4], discovery=True
-        ),
-        dict(
-            articulate_object=objects_list["object_4"], event=events[5], discovery=False
-        ),
-    ]
+    events_copy = deepcopy(events)
+    kwargs_batches = []
+    discovered_objects = set()
+    for start, end in keyframes:
+        if events_copy and events_copy[0]["start_ts"] <= start:
+            event = events_copy.pop(0)
+            discovery = False
+            if event["object_name"] not in discovered_objects:
+                discovery = True
+                discovered_objects.add(event["object_name"])
+            kwargs_batches.append(dict(event=event,
+                                       articulate_object=objects_list[event["object_name"]],
+                                        discovery=discovery))
+        else:
+            kwargs_batches.append({})
+    
+    # kwargs_batches = [
+    #     {},
+    #     dict(
+    #         articulate_object=objects_list["object_0"], event=events[0], discovery=True
+    #     ),
+    #     dict(
+    #         articulate_object=objects_list["object_0"], event=events[1], discovery=False
+    #     ),
+    #     dict(
+    #         articulate_object=objects_list["object_2"], event=events[2], discovery=True
+    #     ),
+    #     dict(
+    #         articulate_object=objects_list["object_2"], event=events[3], discovery=False
+    #     ),
+    #     dict(
+    #         articulate_object=objects_list["object_4"], event=events[4], discovery=True
+    #     ),
+    #     dict(
+    #         articulate_object=objects_list["object_4"], event=events[5], discovery=False
+    #     ),
+    # ]
     
     # assert len(fake_obs_batches) == len(kwargs_batches), "fake_obs and kwargs batches must be the same length"
     if len(fake_obs_batches) != len(kwargs_batches):
@@ -163,7 +192,7 @@ def run():
     contains_dict = dict()
     constrained_dict = dict()
     
-    log_root = "/home/exx/Downloads/aria_sg_est"
+    log_root = "/home/exx/Downloads/spot_room_v1_sg_est"
     os.makedirs(log_root, exist_ok=True)
     current_instances = []
     for kfid, (fake_obs, kwargs) in enumerate(zip(fake_obs_batches, kwargs_batches)):

@@ -145,8 +145,7 @@ def articulation_wrapper(i, fps, disp_per_s, *,
 from asyncio import sleep
 
 from vuer import Vuer, VuerSession
-from vuer.schemas import Scene, PointCloud, TriMesh, group
-
+from vuer.schemas import DefaultScene, PointCloud, TriMesh, group, Sphere
 
 app = Vuer(queries=dict(show_grid=False))
 
@@ -158,10 +157,20 @@ async def main(sess: VuerSession):
     # with open("/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/debug_vol_fusion/full/identified_objects.pkl", "rb") as f:
     #     identified_objects = pickle.load(f)
 
-    with open("/home/exx/Downloads/aria_sg_no_est_more/final_state.pkl", "rb") as f:
+    # with open("/home/exx/Downloads/aria_sg_no_est_more/final_state.pkl", "rb") as f:
+    #     state = pickle.load(f)
+    # with open("/home/exx/datasets/aria/real/kitchen_v2/vol_fusion_v3_hand_detector_combination/identified_objects.pkl", "rb") as f:
+    #     identified_objects = pickle.load(f)
+
+    with open("/home/exx/Downloads/aria_sg_est/final_state.pkl", "rb") as f:
         state = pickle.load(f)
-    with open("/home/exx/datasets/aria/real/kitchen_v2/vol_fusion_v3_hand_detector_combination/identified_objects.pkl", "rb") as f:
+    with open("/home/exx/datasets/aria/real/stata_kitchen_v1/vol_fusion_v1/identified_objects.pkl", "rb") as f:
         identified_objects = pickle.load(f)
+    
+    # with open("/home/exx/Downloads/spot_room_v1_sg_est/final_state.pkl", "rb") as f:
+    #     state = pickle.load(f)
+    # with open("/home/exx/datasets/aria/real/spot_room_v1/vol_fusion_v1/identified_objects.pkl", "rb") as f:
+    #     identified_objects = pickle.load(f)
 
     
     # print out constrained and contained ids
@@ -176,14 +185,18 @@ async def main(sess: VuerSession):
     articulate_parts = load_articulate_parts(identified_objects)
     parts = load_vuer_parts(articulate_parts)
     
-    h_v, h_f, h_c = get_hierarchy(state, show_boxes=True, restrict_relations=True)
+    h_v, h_f, h_c = get_hierarchy(state, show_boxes=True, restrict_relations=False)
     pcd_points, pcd_colors = get_pcd(state)
     
-    sess.set @ Scene(
+    # pcd = o3d.geometry.PointCloud()
+    # pcd.points = o3d.utility.Vector3dVector(state["constrained_dict"]['object_0'][1]["canonical_pcd"])
+    # o3d.io.write_point_cloud("/home/exx/Downloads/pcd.ply", pcd)
+    # 
+    sess.set @ DefaultScene(
         TriMesh(vertices=h_v, faces=h_f, colors=h_c),
-        PointCloud(vertices=pcd_points, colors=pcd_colors, size=0.2 ),
+        PointCloud(vertices=pcd_points, colors=pcd_colors, size=0.05 ),
         *parts,
-        rotation=[-np.pi/2, 0, 0],
+        # rotation=[-np.pi/2, 0, 0],
     )
     
     
@@ -203,15 +216,35 @@ async def main(sess: VuerSession):
     # }
 
     limits = {
-        "object_0": {"lower": -2.0, "upper": 0.0, "start": 0.0, "disp_per_s": 2 / 2},
-        "object_2": {"lower": -2.0, "upper": 0.0, "start": 0.0, "disp_per_s": 2/2},
-        "object_4": {"lower": 0, "upper": 0.5, "start": 0.0, "disp_per_s": 0.5/2},
+        "object_0": {"lower": 0, "upper": 2.0, "start": 0.0, "disp_per_s": 2 / 2},
+        "object_2": {"lower": 0, "upper": 0.3, "start": 0.0, "disp_per_s": 0.3/2},
+        "object_4": {"lower": -2, "upper": 0, "start": 0.0, "disp_per_s": 2/2},
         # "object_6": {"lower": 0.0, "upper": 0.3, "start": 0.0, "disp_per_s": 0.3/2},
     }
+
+    # limits = {
+    #     "object_0": {"lower": 0.0, "upper": 0.4, "start": 0.0, "disp_per_s": 0.4 / 2},
+    #     "object_4": {"lower": 0, "upper": 0.4, "start": 0.0, "disp_per_s": 0.4 / 2},
+    # }
+    
+    world_tfs = np.load("/home/exx/datasets/aria/real/spot_room_v1/vol_fusion_v1/sg_obs/world_tfs.npy")
+    objects = [Sphere(args=[0.05, 10, 10], color="red", key=f"object_{i}", position=world_tfs[i][:3, -1].flatten().tolist()) for i in range(len(world_tfs))]
+    
+    
+    # with open("/home/exx/datasets/aria/real/stata_kitchen_v1/vol_fusion_v1/sg_obs/camera_info.pkl", "rb") as f:
+    #     cam_info = pickle.load(f)
+    # traj = cam_info["poses"]
+    # 
+    # poses = [Sphere(args=[0.05, 10, 10], color="blue", key=f"pose", position=traj[i][:3, -1].flatten().tolist()) for i in range(len(traj))]
+    
+    await sleep(1)
     
     while True:
+        # sess.upsert @ objects
+        # sess.upsert @ poses[i]
         for k in limits:
             sess.upsert @ articulate(k, articulation_wrapper(i, fps, **limits[k]), articulate_parts, identified_objects)
+        # 
         #     
         # print(i)
         i += 1
