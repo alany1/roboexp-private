@@ -70,9 +70,9 @@ def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         description="Find safest straight-line approach direction "
                     "for a grasp point inside a cavity.")
-    ap.add_argument("--mesh_path", default="/home/exx/datasets/aria/real/spot_room_v1/vol_fusion_v1/mesh_234.ply", type=Path,
+    ap.add_argument("--mesh_path", default="/home/exx/datasets/aria/real/stata_kitchen_v2/vol_fusion_v1/mesh_253.ply", type=Path,
                     help="Watertight mesh file of the *environment* (.ply, .obj, …)", required=False)
-    ap.add_argument("--pick_xyz", default="-0.9074752,0.18065326,-0.50076877", type=str,
+    ap.add_argument("--pick_xyz", default="1.52881356, -0.27627119, -0.37683616", type=str,
                     help="Comma-separated XYZ of grasp pose, e.g. 0.5,1.0,0.8", required=False)
     # ap.add_argument("--pick_xyz", default="1.5,-1.0,-0.50076877", type=str, required=False)
     ap.add_argument("--radius", type=float, default=0.15,
@@ -81,10 +81,9 @@ def parse_args() -> argparse.Namespace:
                     help="Cylinder length / plunge depth [m]")
     ap.add_argument("--n_dirs", type=int, default=64,
                     help="Number of test directions (Fibonacci-sphere)")
-    ap.add_argument("--standoff", type=float, default=0.5,
+    ap.add_argument("--standoff", type=float, default=0.3,
                     help="Distance [m] to place standoff pose back along safest dir")
     return ap.parse_args()
-
 
 # ---------- main --------------------------------------------------------
 def main() -> None:

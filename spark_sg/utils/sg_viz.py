@@ -123,8 +123,8 @@ def hierarchy_to_mesh(
 
     if show_boxes:
         for inst_id in obj_ids:
-            if "handle" not in inst_id:  # skip handles
-                continue
+            # if "handle" not in inst_id:  # skip handles
+            #     continue
             if inst_id not in id2box:
                 continue
             centre = np.asarray(id2box[inst_id]["center"], float)

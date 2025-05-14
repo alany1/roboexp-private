@@ -211,7 +211,7 @@ class RoboAct:
         filter_masks = dict()
         for view in fake_obs:
             filter_masks[view] = fake_obs[view].get("filter_mask", None)
-            print(filter_masks[view].sum())
+            # print(filter_masks[view].sum())
         
         if articulate_object is None:
             self.robo_memory.update_memory(
@@ -339,13 +339,12 @@ class RoboAct:
                         constrained_mask = np.logical_and(mask, convex_hull_mask(after_obj_depth>0))
                         frac_constrained = constrained_mask.sum() / mask.sum()
                         
-                        after_valid = frac_constrained > 0.9
+                        after_valid = frac_constrained > 0.7
                         
                         if before_valid:
                             contains_list.append(i)
                         if after_valid:
                             constrained_list.append(i)
-
         
                     contains_pred_phrases = [
                         p

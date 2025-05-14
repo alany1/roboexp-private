@@ -28,8 +28,33 @@ class StaticObjectEvaluator:
         self.gt = gt_dict
 
         self.label_id2name = label_id2name
-
-        # dedupe, why?????
+        
+        self.gt.keys()
+        # instance and semantic id have the same meaning -- objects with the same instance id should be grouped as ONE GT isntance.
+        # we populate the bounding box attribute for each of these.
+        # key is the instance id
+        instance_bbox_mapping = dict()
+        for name, obj in self.gt.items():
+            # bbox is defined as the maximum bounding box of all the objects with the same instance id
+            bbox = obj["bbox"]
+            object_id = obj["class_id"]
+            if object_id not in instance_bbox_mapping:
+                instance_bbox_mapping[object_id] = {
+                    "bbox": bbox,
+                    "class_id": obj["class_id"],
+                }
+            else:
+                # maximum
+                instance_bbox_mapping[object_id]["bbox"] = [
+                    np.minimum(instance_bbox_mapping[object_id]["bbox"][0], bbox[0]),
+                    np.maximum(instance_bbox_mapping[object_id]["bbox"][1], bbox[1]),
+                ]
+        
+        self.gt = instance_bbox_mapping
+            
+        
+        
+        
         self.pred_nodes = []
         for node in obj_nodes:
             if node["instance_id"] not in [x["instance_id"] for x in self.pred_nodes] and node["attributes"]["label"] not in ["background", "wall", "ceiling", "floor", "countertop", "door", "doorframe", "window", "windowframe", "windowsill", "cabinet"]:
@@ -56,18 +81,12 @@ class StaticObjectEvaluator:
                 fp += 1
                 continue
 
-            # pred_bbox_bounds = np.array(corners_to_bbox(np.array(pred_bbox)))
-
-            # best = max(cands, key=lambda g: bbox_iou(pred_bbox, np.array(self.gt[g]["bbox"])))
             best = min(cands, key =lambda g: np.linalg.norm(np.mean(np.array(self.gt[g]["bbox"]), axis=0) - pred_center))
 
             name, gt_bbox, gt_pose = best, self.gt[best]["bbox"], None
             iou = bbox_iou(pred_bbox, np.array(gt_bbox))
-            # if best == "oven":
-                # print('wtf', iou, name, n["instance_id"])
 
             if iou <= 0.0:
-                # print(n["instance_id"])
                 fp += 1
                 continue
 
@@ -99,16 +118,28 @@ def eval_static_objects(state, label_id2name):
     return metrics
 
 if __name__ == '__main__':
-    keyframes_path = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/keyframes.pkl"
-    gt_static_objects_json = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/object_labels/static_objects.json"
-    gt_dynamic_objects_json = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/object_labels/dynamic_objects.json"
+    # keyframes_path = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/keyframes.pkl"
+    # 
+    # gt_static_objects_json = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/object_labels/static_objects.json"
+    # gt_dynamic_objects_json = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/object_labels/dynamic_objects.json"
+    # 
+    # gt_dynamic_bboxes_json = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/object_labels/dynamic_bboxes.json"
+    # gt_bone_bboxes_json = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/object_labels/bone_bboxes.json"
+    # 
+    # final_state = "/home/exx/Downloads/spark_states_v8/final_state.pkl"
+    # 
+    # label_space_path = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/semantic_labeling/label_space.yaml"
 
-    gt_dynamic_bboxes_json = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/object_labels/dynamic_bboxes.json"
-    gt_bone_bboxes_json = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/object_labels/bone_bboxes.json"
 
-    final_state = "/home/exx/Downloads/spark_states_v8/final_state.pkl"
+    root = "/home/exx/datasets/aria/blender_eval/bedroom"
+    keyframes_path = f"{root}/keyframes.pkl"
 
-    label_space_path = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/semantic_labeling/label_space.yaml"
+    gt_static_objects_json = f"{root}/object_labels/static_objects.json"
+
+    final_state = f"{root}/debug_vol_fusion/full/sg_est/final_state.pkl"
+
+    label_space_path = f"{root}/semantic_labeling/label_space.yaml"
+    
     with open(label_space_path, "r") as f:
         label_space = yaml.safe_load(f)
 
@@ -116,15 +147,6 @@ if __name__ == '__main__':
 
     with open(gt_static_objects_json, "r") as f:
         gt_static_objects = json.load(f)
-
-    with open(gt_dynamic_objects_json, "r") as f:
-        gt_dynamic_objects = json.load(f)
-
-    with open(gt_dynamic_bboxes_json, "r") as f:
-        gt_dynamic_bboxes = json.load(f)
-
-    with open(gt_bone_bboxes_json, "r") as f:
-        gt_bone_bboxes = json.load(f)
 
     with open(keyframes_path, "rb") as f:
         keyframes = pickle.load(f)
@@ -136,22 +158,8 @@ if __name__ == '__main__':
     dynamic_objects_map = {}
     mesh_map = {}
 
-    all_states = sorted(glob.glob("/home/exx/Downloads/spark_states_v9/*.pkl"))
-    # with open(final_state, "rb") as f:
-    #     state = pickle.load(f)
-    # 
-    avg_metrics = defaultdict(lambda: 0)
-    for i, state_path in enumerate(all_states):
-        print(state_path)
-        with open(state_path, "rb") as f:
-            state = pickle.load(f)
+    with open(final_state, "rb") as f:
+        state = pickle.load(f)
 
-        metrics = eval_static_objects(state, label_id2name)
-        print(metrics)
-        for k, v in metrics.items():
-            avg_metrics[k] += v
-
-    for k, v in avg_metrics.items():
-        avg_metrics[k] = v / len(all_states)
-
-    print(avg_metrics)
+    metrics = eval_static_objects(state, label_id2name)
+    print(metrics)

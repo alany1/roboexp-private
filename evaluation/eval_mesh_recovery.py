@@ -105,18 +105,18 @@ if __name__ == '__main__':
     dynamic_objects_map = {}
     mesh_map = {}
 
-    final_state = "/home/exx/Downloads/spark_states_v9/final_state.pkl"
+    # final_state = "/home/exx/Downloads/spark_states_v9/final_state.pkl"
+    final_state = "/home/exx/datasets/aria/blender_eval/bedroom/debug_vol_fusion/full/sg_est/final_state.pkl"
     
     with open(final_state, "rb") as f:
         final_state = pickle.load(f)
-    
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(final_state["points"])
-    o3d.io.write_point_cloud("/home/exx/Downloads/tmp_pcd.ply", pcd)
-    
-    
-    gt_mesh_path = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/mesh_labels/background_mesh.ply"
-    gt_pcd_path = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/mesh_labels/pcd_background_mesh.ply"
+
+    # pcd = o3d.geometry.PointCloud()
+    # pcd.points = o3d.utility.Vector3dVector(final_state["points"])
+    # o3d.io.write_point_cloud("/home/exx/Downloads/tmp_pcd.ply", pcd)
+
+    gt_mesh_path = "/home/exx/datasets/aria/blender_eval/bedroom/mesh_labels/background_mesh.ply"
+    gt_pcd_path = "/home/exx/datasets/aria/blender_eval/bedroom/mesh_labels/pcd_background_mesh.ply"
     
     if not os.path.exists(gt_pcd_path):
         # sample it

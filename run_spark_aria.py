@@ -35,19 +35,20 @@ def run():
         "bottle",
         # "coffeemaker",
         # "mug",
-        # "dishwasher",
+        "dishwasher",
         # "door",
-        # "fork",
-        # "knife",
+        "fork",
+        "knife",
+        # "pull",
         # "microwave",
         # "oven",
-        # "plate",
+        "plate",
         # "spatula",
-        "pillow",
+        # "pillow",
         "stool",
-        "monitor",
-        "scissors",
-        "keyboard",
+        # "monitor",
+        # "scissors",
+        "umbrella",
         "handle",
     ]
     # part_level_labels = ["handle"]
@@ -69,9 +70,16 @@ def run():
     # vol_fusion_root = "/home/exx/datasets/aria/real/kitchen_v2/vol_fusion_v3_hand_detector_combination"
     # aria_obs_dir = "/home/exx/Downloads/aria_obs_est"
     
-    vol_fusion_root = "/home/exx/datasets/aria/real/spot_room_v1/vol_fusion_v1"
-    aria_obs_dir = "/home/exx/Downloads/spot_room_v1_obs/"
+    # vol_fusion_root = "/home/exx/datasets/aria/real/spot_room_v1/vol_fusion_v1"
+    # aria_obs_dir = "/home/exx/Downloads/spot_room_v1_obs/"
     
+    # vol_fusion_root = "/home/exx/datasets/aria/real/stata_kitchen_v1/vol_fusion_v1"
+    # aria_obs_dir = "/home/exx/Downloads/stata_kitchen_v1_obs_debug/"
+
+    vol_fusion_root = "/home/exx/datasets/aria/real/stata_kitchen_v2/vol_fusion_v1"
+    aria_obs_dir = f"{vol_fusion_root}/sg_obs"
+    log_root = f"{vol_fusion_root}/sg_est"
+
     with open(
         f"{vol_fusion_root}/identified_objects.pkl",
         "rb",
@@ -119,37 +127,9 @@ def run():
         else:
             kwargs_batches.append({})
     
-    # kwargs_batches = [
-    #     {},
-    #     dict(
-    #         articulate_object=objects_list["object_0"], event=events[0], discovery=True
-    #     ),
-    #     dict(
-    #         articulate_object=objects_list["object_0"], event=events[1], discovery=False
-    #     ),
-    #     dict(
-    #         articulate_object=objects_list["object_2"], event=events[2], discovery=True
-    #     ),
-    #     dict(
-    #         articulate_object=objects_list["object_2"], event=events[3], discovery=False
-    #     ),
-    #     dict(
-    #         articulate_object=objects_list["object_4"], event=events[4], discovery=True
-    #     ),
-    #     dict(
-    #         articulate_object=objects_list["object_4"], event=events[5], discovery=False
-    #     ),
-    # ]
-    
-    # assert len(fake_obs_batches) == len(kwargs_batches), "fake_obs and kwargs batches must be the same length"
     if len(fake_obs_batches) != len(kwargs_batches):
         kwargs_batches = kwargs_batches[:len(fake_obs_batches)]
         print("Warning: fake_obs_batches and kwargs_batches are not the same length. Truncating kwargs_batches to match fake_obs_batches.")
-    
-    # fake_obs_batches = fake_obs_batches[-2:]
-    # kwargs_batches = kwargs_batches[-2:]
-    
-    
     def set_parent_tf(*, articulate_object, event, related_objects):
         # store the objects position in the world frame, but when the parent object is in its canonical pose.
         # retrieve the objects angle from the current event, and then rotate it into canonical position.
@@ -192,10 +172,11 @@ def run():
     contains_dict = dict()
     constrained_dict = dict()
     
-    log_root = "/home/exx/Downloads/spot_room_v1_sg_est"
     os.makedirs(log_root, exist_ok=True)
     current_instances = []
     for kfid, (fake_obs, kwargs) in enumerate(zip(fake_obs_batches, kwargs_batches)):
+        # if kfid != 1:
+        #     continue
         if kwargs and kwargs["discovery"]:
                 contains, constrained = robo_act.alan_get_observations_update_memory(fake_obs, visualize=True, **kwargs)
                 contains_newlist = compare(old_instances=current_instances, robo_memory=contains)

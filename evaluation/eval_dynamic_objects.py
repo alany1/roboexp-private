@@ -1,6 +1,9 @@
 import numpy as np
 import json
 import pickle
+
+import yaml
+
 from spark_sg.build_dynamic_objects import build
 from evaluation.eval_static_objects import bbox_iou
 
@@ -24,12 +27,46 @@ class DynamicObjectEvaluator:
     {name:{bbox:[min,max], class_id:int, pose:[xyz, quat]}}.
     """
 
-    def __init__(self, obj_nodes, gt_dict):
+    def __init__(self, obj_nodes, gt_dict, gt_dynamic_objects):
         self.pred_nodes = obj_nodes
         self.gt = gt_dict
-
+        
+        merged_gt = dict()
+        for kf, gt in gt_dict.items():
+            gt_kf_dict = dict()
+            for obj_name in gt_dynamic_objects:
+                obj_class = gt_dynamic_objects[obj_name]["class_id"]
+                obj_bbox = gt_dynamic_objects[obj_name]["bbox"]
+                if obj_class not in gt_kf_dict:
+                    gt_kf_dict[obj_class] = obj_bbox
+                else:
+                    gt_kf_dict[obj_class] = [
+                        np.minimum(gt_kf_dict[obj_class][0], obj_bbox[0]),
+                        np.maximum(gt_kf_dict[obj_class][1], obj_bbox[1]),
+                    ]
+            for k, v in gt.items():
+                if k not in gt_dynamic_objects:
+                    # add it
+                    gt_kf_dict[k] = v
+                    
+            merged_gt[kf] = gt_kf_dict
+        
+        self.gt = merged_gt
+        
         # get bounding box of all objects at the given keyframe
         self.max_matching_distance = 0.5
+        
+    def merge_kf(self, d):
+        """
+        Merge bboxes from a single keyframe that correpsond to the same gt instance.
+        """
+        merged = dict()
+        for k, v in d.items():
+            if k not in merged:
+                merged[k] = v
+            else:
+                merged[k] = np.concatenate([merged[k], v], axis=0)
+        return merged
 
     def interpolate_centroid(self, trajectory_keyframes, kf):
         if kf in trajectory_keyframes.keys():
@@ -129,15 +166,26 @@ class DynamicObjectEvaluator:
         return metrics
 
 if __name__ == '__main__':
-    keyframes_path = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/keyframes.pkl"
-    gt_dynamic_objects_json = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/object_labels/dynamic_objects.json"
+    # keyframes_path = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/keyframes.pkl"
+    # gt_dynamic_objects_json = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/object_labels/dynamic_objects.json"
+    # 
+    # gt_dynamic_bboxes_json = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/object_labels/dynamic_bboxes.json"
+    # gt_bone_bboxes_json = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/object_labels/bone_bboxes.json"
+    # 
+    # final_state = "/home/exx/Downloads/spark_states_v9/final_state.pkl"
+    # events = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/debug_vol_fusion/full/events.pkl"
+    # identified_objects = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/debug_vol_fusion/full/identified_objects.pkl"
 
-    gt_dynamic_bboxes_json = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/object_labels/dynamic_bboxes.json"
-    gt_bone_bboxes_json = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/object_labels/bone_bboxes.json"
+    root = "/home/exx/datasets/aria/blender_eval/bedroom"
+    keyframes_path = f"{root}/keyframes.pkl"
+    gt_dynamic_objects_json = f"{root}/object_labels/dynamic_objects.json"
 
-    final_state = "/home/exx/Downloads/spark_states_v9/final_state.pkl"
-    events = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/debug_vol_fusion/full/events.pkl"
-    identified_objects = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/debug_vol_fusion/full/identified_objects.pkl"
+    gt_dynamic_bboxes_json = f"{root}/object_labels/dynamic_bboxes.json"
+    gt_bone_bboxes_json = f"{root}/object_labels/bone_bboxes.json"
+    
+    final_state = f"{root}/debug_vol_fusion/full/sg_est/final_state.pkl"
+    events = f"{root}/debug_vol_fusion/full/events.pkl"
+    identified_objects = f"{root}/debug_vol_fusion/full/identified_objects.pkl"
     
     with open(final_state, "rb") as f:
         final_state = pickle.load(f)
@@ -176,7 +224,7 @@ if __name__ == '__main__':
         _d.update(deepcopy(gt_bone_bboxes[str(k)]))
         all_dynamic_bbox[k] = deepcopy(_d)
 
-    evaluator = DynamicObjectEvaluator(pred_dynamic_objects, all_dynamic_bbox)
+    evaluator = DynamicObjectEvaluator(pred_dynamic_objects, all_dynamic_bbox, gt_dynamic_objects)
     for k in keyframes:
         metrics = evaluator.evaluate(k)
 

@@ -47,8 +47,8 @@ def extract_viz_data(state):
     return data
 
 def get_hierarchy(state,         
-                  gap_z=.75,
-        parent_gap_z=.75,
+                  gap_z=3,
+        parent_gap_z=3,
         node_radius=0.05,
         parent_radius=0.07,
         line_radius=0.012,
@@ -157,53 +157,67 @@ async def main(sess: VuerSession):
     # with open("/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/debug_vol_fusion/full/identified_objects.pkl", "rb") as f:
     #     identified_objects = pickle.load(f)
 
-    # with open("/home/exx/Downloads/aria_sg_no_est_more/final_state.pkl", "rb") as f:
-    #     state = pickle.load(f)
-    # with open("/home/exx/datasets/aria/real/kitchen_v2/vol_fusion_v3_hand_detector_combination/identified_objects.pkl", "rb") as f:
-    #     identified_objects = pickle.load(f)
-
+    with open("/home/exx/Downloads/aria_sg_no_est_more/final_state.pkl", "rb") as f:
+        state = pickle.load(f)
+    with open("/home/exx/datasets/aria/real/kitchen_v2/vol_fusion_v3_hand_detector_combination/identified_objects.pkl", "rb") as f:
+        identified_objects = pickle.load(f)
+    # 
     with open("/home/exx/Downloads/aria_sg_est/final_state.pkl", "rb") as f:
         state = pickle.load(f)
     with open("/home/exx/datasets/aria/real/stata_kitchen_v1/vol_fusion_v1/identified_objects.pkl", "rb") as f:
         identified_objects = pickle.load(f)
     
-    # with open("/home/exx/Downloads/spot_room_v1_sg_est/final_state.pkl", "rb") as f:
-    #     state = pickle.load(f)
-    # with open("/home/exx/datasets/aria/real/spot_room_v1/vol_fusion_v1/identified_objects.pkl", "rb") as f:
-    #     identified_objects = pickle.load(f)
+    with open("/home/exx/Downloads/spot_room_v1_sg_est/final_state.pkl", "rb") as f:
+        state = pickle.load(f)
+    with open("/home/exx/datasets/aria/real/spot_room_v1/vol_fusion_v1/identified_objects.pkl", "rb") as f:
+        identified_objects = pickle.load(f)
 
-    
+    with open("/home/exx/datasets/aria/real/stata_kitchen_v2/vol_fusion_v1/sg_est/final_state.pkl", "rb") as f:
+        state = pickle.load(f)
+    with open(
+        "/home/exx/datasets/aria/real/stata_kitchen_v2/vol_fusion_v1/identified_objects.pkl",
+        "rb",
+    ) as f:
+        identified_objects = pickle.load(f)
+        
+    with open("/home/exx/datasets/aria/blender_eval/bedroom/debug_vol_fusion/full/sg_est/final_state.pkl", "rb") as f:
+        state = pickle.load(f)
+    with open(
+        "/home/exx/datasets/aria/blender_eval/bedroom/debug_vol_fusion/full/identified_objects.pkl",
+        "rb",
+    ) as f:
+        identified_objects = pickle.load(f)
+
+    mesh_path = f"/home/exx/datasets/aria/blender_eval/bedroom/debug_vol_fusion/mesh_0.ply"
+    mesh = o3d.io.read_triangle_mesh(mesh_path)
+
     # print out constrained and contained ids
     for obj in state["constrained_dict"]:
         obj_constrained = [x["instance_id"] for x in state["constrained_dict"][obj]] 
-        print(obj_constrained)
+        print(f"Constrains | {obj} | {obj_constrained}")
         
     for obj in state["contains_dict"]:
         obj_constrained = [x["instance_id"] for x in state["contains_dict"][obj]] 
-        print(obj_constrained)
+        print(f"Contains | {obj} | {obj_constrained}")
     
     articulate_parts = load_articulate_parts(identified_objects)
     parts = load_vuer_parts(articulate_parts)
     
-    h_v, h_f, h_c = get_hierarchy(state, show_boxes=True, restrict_relations=False)
+    h_v, h_f, h_c = get_hierarchy(state, show_boxes=True, restrict_relations=True)
     pcd_points, pcd_colors = get_pcd(state)
     
     # pcd = o3d.geometry.PointCloud()
-    # pcd.points = o3d.utility.Vector3dVector(state["constrained_dict"]['object_0'][1]["canonical_pcd"])
+    # pcd.points = o3d.utility.Vector3dVector(state["constrained_dict"]['object_0'][-1]["canonical_pcd"])
     # o3d.io.write_point_cloud("/home/exx/Downloads/pcd.ply", pcd)
     # 
     sess.set @ DefaultScene(
         TriMesh(vertices=h_v, faces=h_f, colors=h_c),
-        PointCloud(vertices=pcd_points, colors=pcd_colors, size=0.05 ),
-        *parts,
+        # TriMesh(vertices=np.array(mesh.vertices), faces=np.array(mesh.triangles)),
+        PointCloud(vertices=pcd_points, colors=pcd_colors, size=0.1 ),
+        # *parts,
         # rotation=[-np.pi/2, 0, 0],
     )
     
-    
-    # sess.upsert @ articulate("object_6", 0.0, articulate_parts, identified_objects)
-    # sess.upsert @ articulate("object_6", 0.5, articulate_parts, identified_objects)
-    # sess.upsert @ articulate("object_6", 1.0, articulate_parts, identified_objects)
-    # 
     i = 0
     fps = 24
     
@@ -223,28 +237,22 @@ async def main(sess: VuerSession):
     }
 
     # limits = {
-    #     "object_0": {"lower": 0.0, "upper": 0.4, "start": 0.0, "disp_per_s": 0.4 / 2},
-    #     "object_4": {"lower": 0, "upper": 0.4, "start": 0.0, "disp_per_s": 0.4 / 2},
+    #     "object_0": {"lower": 0.0, "upper": 0.5, "start": 0.0, "disp_per_s": 0.5 / 2},
+    #     "object_4": {"lower": 0, "upper": 0.5, "start": 0.0, "disp_per_s": 0.5 / 2},
     # }
     
-    world_tfs = np.load("/home/exx/datasets/aria/real/spot_room_v1/vol_fusion_v1/sg_obs/world_tfs.npy")
-    objects = [Sphere(args=[0.05, 10, 10], color="red", key=f"object_{i}", position=world_tfs[i][:3, -1].flatten().tolist()) for i in range(len(world_tfs))]
+    # world_tfs = np.load("/home/exx/datasets/aria/real/spot_room_v1/vol_fusion_v1/sg_obs/world_tfs.npy")
+    # objects = [Sphere(args=[0.05, 10, 10], color="red", key=f"object_{i}", position=world_tfs[i][:3, -1].flatten().tolist()) for i in range(len(world_tfs))]
     
-    
-    # with open("/home/exx/datasets/aria/real/stata_kitchen_v1/vol_fusion_v1/sg_obs/camera_info.pkl", "rb") as f:
-    #     cam_info = pickle.load(f)
-    # traj = cam_info["poses"]
-    # 
-    # poses = [Sphere(args=[0.05, 10, 10], color="blue", key=f"pose", position=traj[i][:3, -1].flatten().tolist()) for i in range(len(traj))]
     
     await sleep(1)
     
     while True:
         # sess.upsert @ objects
-        # sess.upsert @ poses[i]
-        for k in limits:
-            sess.upsert @ articulate(k, articulation_wrapper(i, fps, **limits[k]), articulate_parts, identified_objects)
-        # 
+        # # sess.upsert @ poses[i]
+        # for k in limits:
+        #     sess.upsert @ articulate(k, articulation_wrapper(i, fps, **limits[k]), articulate_parts, identified_objects)
+        # # 
         #     
         # print(i)
         i += 1

@@ -80,16 +80,22 @@ def run():
     )
     
     
+    # vol_fusion_root = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/debug_vol_fusion/full"
+    vol_fusion_root = "/home/exx/datasets/aria/blender_eval/bedroom/debug_vol_fusion/full"
+    log_root = f"{vol_fusion_root}/sg_est"
+    
     with open(
-        "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/debug_vol_fusion/full/identified_objects.pkl",
+        f"{vol_fusion_root}/identified_objects.pkl",
         "rb",
     ) as f:
         objects_list = pickle.load(f)
     with open(
-        "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901/debug_vol_fusion/full/events.pkl",
+        f"{vol_fusion_root}/events.pkl",
         "rb",
     ) as f:
         events = pickle.load(f)
+    with open(f"{vol_fusion_root}/../../keyframes.pkl", "rb") as f:
+        keyframes = pickle.load(f)
     
     def compare(*, old_instances, robo_memory):
         old_instance_ids = [instance.instance_id for instance in old_instances]
@@ -101,33 +107,32 @@ def run():
             
         return new_instances
     
-    ts_batches = [f"/home/exx/Downloads/semantics_test/tmp_{i}.pkl" for i in range(9)]
+    ts_batches = [f"{vol_fusion_root}/../../sg_obs/tmp_{i}.pkl" for i in range(9)]
     fake_obs_batches = []
     for ts_batch in ts_batches:
         with open(ts_batch, "rb") as f:
             fake_obs = pickle.load(f)
             fake_obs_batches.append(fake_obs)
+            
+    events_copy = deepcopy(events)
+    kwargs_batches = []
+    discovered_objects = set()
+    for start, end in keyframes:
+        if events_copy and events_copy[0]["start_ts"] <= start:
+            event = events_copy.pop(0)
+            discovery = False
+            if event["object_name"] not in discovered_objects:
+                discovery = True
+                discovered_objects.add(event["object_name"])
+            kwargs_batches.append(dict(event=event,
+                                       articulate_object=objects_list[event["object_name"]],
+                                        discovery=discovery))
+        else:
+            kwargs_batches.append({})
     
-    kwargs_batches = [
-                      {}, 
-                      dict(articulate_object=objects_list["object_0"], event=events[0], discovery=True),
-                      dict(articulate_object=objects_list["object_1"], event=events[1], discovery=True),
-                      dict(articulate_object=objects_list["object_0"], event=events[2], discovery=False),
-                      dict(articulate_object=objects_list["object_1"], event=events[3], discovery=False),
-                      dict(articulate_object=objects_list["object_4"], event=events[4], discovery=True),
-                      dict(articulate_object=objects_list["object_4"], event=events[5], discovery=False),
-                      dict(articulate_object=objects_list["object_6"], event=events[6], discovery=True),
-                      dict(articulate_object=objects_list["object_6"], event=events[7], discovery=False),
-                      ]
-    
-    # assert len(fake_obs_batches) == len(kwargs_batches), "fake_obs and kwargs batches must be the same length"
     if len(fake_obs_batches) != len(kwargs_batches):
         kwargs_batches = kwargs_batches[:len(fake_obs_batches)]
         print(f"Warning: fake_obs_batches and kwargs_batches are not the same length. Truncating kwargs_batches to match fake_obs_batches.")
-    
-    # fake_obs_batches = fake_obs_batches[-2:]
-    # kwargs_batches = kwargs_batches[-2:]
-    
     
     def set_parent_tf(*, articulate_object, event, related_objects):
         # store the objects position in the world frame, but when the parent object is in its canonical pose.
@@ -171,7 +176,6 @@ def run():
     contains_dict = dict()
     constrained_dict = dict()
     
-    log_root = "/home/exx/Downloads/spark_states_v9"
     os.makedirs(log_root, exist_ok=True)
     current_instances = []
     for kfid, (fake_obs, kwargs) in enumerate(zip(fake_obs_batches, kwargs_batches)):
@@ -188,17 +192,6 @@ def run():
             robo_act.alan_get_observations_update_memory(fake_obs, **kwargs)
         
         current_instances = deepcopy(robo_memory.memory_instances)
-        
-        # temp_robo_act = deepcopy(robo_act)
-        # temp_contains_dict = deepcopy(contains_dict)
-        # temp_constrained_dict = deepcopy(constrained_dict)
-        # 
-        # temp_robo_act.prune_memory(objects_list, temp_contains_dict, temp_constrained_dict)
-        # dump_state(current_instances=current_instances,
-        #            contains_dict=temp_contains_dict,
-        #            constrained_dict=temp_constrained_dict,
-        #            robo_memory=temp_robo_act.robo_memory,
-        #            save_path=os.path.join(log_root, f"state_{kfid}.pkl"))
         
         print(f"saved state {kfid}")
     

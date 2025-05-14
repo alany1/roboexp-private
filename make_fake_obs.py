@@ -1,27 +1,34 @@
 from PIL import Image
 import numpy as np
 import pickle
+from tqdm import tqdm
+import os
 
-root = "/home/exx/datasets/aria/blender_eval/kitchen_cgtrader_4449901"
+root = "/home/exx/datasets/aria/blender_eval/bedroom"
 
-# all_ts = [[30, 60, 90, 120, 150], [200, 210, 220, 230], [340, 350, 360, 380], [505, 525, 535, 550], [626, 630, 635], [675, 700, 740, 770], [825, 850, 875, 890], [1000, 1050, 1100, 1150], [1260, 1350, 1400, 1450], [1550, 1555, 1560, 1565]]
 
 with open(f"{root}/keyframes.pkl", "rb") as f:
     keyframes = pickle.load(f)
-    
+
+save_dir = f"{root}/sg_obs"
+os.makedirs(save_dir, exist_ok=True)
+
 all_ts = []
+frames = []
 obs_per_kf = 10
-# for start, end in keyframes[:-1]:
-#     all_ts.append(list(range(start, end, frames_per_obs)))
-for start, end in keyframes[:-1]:
-    # this is weird but guarauntess start and end frames are included
+for start, end in keyframes:
     all_ts.append(list(range(start, end+1, int((end-start+1)/(obs_per_kf-1)))))
+    frames.extend(all_ts[-1])
     
-all_ts.append([1550, 1555, 1560, 1565])
+with open(f"{save_dir}/all_ts.json", "w") as f:
+    import json
+    json.dump(frames, f)
 
-# all_ts = all_ts[:5]
+# with open(f"{save_dir}/last.json", "w") as f:
+#     import json
+#     json.dump(all_ts[-1], f)
+
 print(all_ts)
-
 def make(ts):
     rgb = f"{root}/renders/rgb/{ts:04d}.jpg"
     rgb = Image.open(rgb)
@@ -50,25 +57,17 @@ def make(ts):
     intrinsics = np.array(camera_info["K"])
     c2w = np.array(camera_info["poses"][ts])
 
-    # R_bl = np.array(
-    #     [
-    #         [0, -1, 0],  # mine X (down)  →  –Y in Blender
-    #         [-1, 0, 0],  # mine Y (left)  →  –X
-    #         [0, 0, -1],
-    #     ]
-    # )  # mine Z (fwd)   →  –Z
     R_bl = np.array(
         [
             [1, 0, 0],  # mine X (down)  →  –Y in Blender
             [0, -1, 0],  # mine Y (left)  →  –X
             [0, 0, -1],
         ]
-    )  # mine Z (fwd)   →  –Z
+    )
     R4 = np.eye(4, dtype=float)
     R4[:3, :3] = R_bl  # embed as 4×4
 
-    # post-multiply so the rotation acts in camera space
-    c2w = c2w @ R4  # NOT R4 @ pose
+    c2w = c2w @ R4
 
     mask = depth < 4.5
     
@@ -97,11 +96,6 @@ def make(ts):
     return fake_obs
 
 
-from tqdm import tqdm
-import os
-
-save_dir = f"/home/exx/Downloads/semantics_test"
-os.makedirs(save_dir, exist_ok=True)
 for i, ts_batch in tqdm(enumerate(all_ts)):
     fake_obs = dict()
     for ts in ts_batch:

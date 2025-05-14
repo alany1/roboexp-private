@@ -11,8 +11,10 @@ pipe = pipeline(task="depth-estimation", model="depth-anything/Depth-Anything-V2
 
 # root = "/home/exx/datasets/aria/real/kitchen_v2/vol_fusion_v3_hand_detector_combination"
 root = "/home/exx/datasets/aria/real/spot_room_v1/vol_fusion_v1"
+root = "/home/exx/datasets/aria/real/stata_kitchen_v1/vol_fusion_v1"
+root = "/home/exx/datasets/aria/real/stata_kitchen_v2/vol_fusion_v1"
 
-save_dir = "/home/exx/Downloads/spot_room_v1_obs"
+save_dir = f"{root}/sg_obs"
 # for masking out the human
 # instances_dir = "/home/exx/datasets/aria/real/kitchen_v2/processed/instances"
 instances_dir=None
@@ -23,13 +25,12 @@ with open(f"{root}/keyframes.pkl", "rb") as f:
     keyframes = pickle.load(f)
     
 all_ts = []
-obs_per_kf = 15
+obs_per_kf = 10
 for start, end in keyframes:
     all_ts.append(list(range(start, end+1, int((end-start+1)/(obs_per_kf-1)))))
-
-# all_ts = all_ts[-2:]
-    
 print(all_ts)
+
+all_ts[1] = [264, 289, 303, 330, 343, 356, 366, 374, 379, 384, 397, 409]
 
 background_classes = [0, 1, 3, 5, 15, 45, ]
 
